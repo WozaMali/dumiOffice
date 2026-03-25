@@ -1,24 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import StorefrontAuthDialog from "@/components/StorefrontAuthDialog";
-import StorefrontConsentDialog from "@/components/StorefrontConsentDialog";
 import { ensureStoreClient } from "@/lib/api/storefront/clients";
 import { storefrontApi } from "@/lib/api/storefront";
 
 const WalkInClientForm = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
-  const [consentReady, setConsentReady] = useState(false);
-  const [consentDialogOpen, setConsentDialogOpen] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const pendingSaveRef = useRef(false);
 
   const [form, setForm] = useState({
     customerName: "",
@@ -47,33 +44,18 @@ const WalkInClientForm = () => {
         customerEmail: client.email || prev.customerEmail,
         customerPhone: prev.customerPhone || client.phone || "",
       }));
-
-      const consent = await storefrontApi.getClientConsent(client.id);
-      const accepted = !!consent?.terms_accepted_at && !!consent?.privacy_accepted_at;
-      setConsentReady(accepted);
-      setConsentDialogOpen(!accepted);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to prepare your secure profile.";
+      const message =
+        err instanceof Error ? err.message : "Failed to prepare your client profile.";
       toast.error(message);
     } finally {
       setLoadingProfile(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authed) {
-      setAuthDialogOpen(true);
-      toast.error("Sign in to continue with secure checkout details.");
-      return;
-    }
+  const saveDetails = async () => {
     if (!clientId) {
       toast.error("Could not identify your secure client profile.");
-      return;
-    }
-    if (!consentReady) {
-      setConsentDialogOpen(true);
-      toast.error("Please complete consent before saving details.");
       return;
     }
     if (!form.customerName.trim() || !form.customerPhone.trim()) {
@@ -90,13 +72,17 @@ const WalkInClientForm = () => {
         form.complex.trim(),
     );
 
-    if (hasAnyAddressInput && (!form.streetAddress.trim() || !form.city.trim() || !form.postalCode.trim())) {
+    if (
+      hasAnyAddressInput &&
+      (!form.streetAddress.trim() || !form.city.trim() || !form.postalCode.trim())
+    ) {
       toast.error("For delivery address, add at least street address, city, and postal code.");
       return;
     }
 
     try {
       setSubmitting(true);
+
       const deliveryLine1 = hasAnyAddressInput
         ? [form.streetAddress.trim(), form.complex.trim(), form.suburb.trim(), form.province.trim()]
             .filter(Boolean)
@@ -119,11 +105,22 @@ const WalkInClientForm = () => {
         });
       }
 
-      toast.success("Thank you, your secure profile details have been saved.");
+      toast.success("Thank you, your client details have been saved.");
       setSubmitted(true);
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authed) {
+      pendingSaveRef.current = true;
+      setAuthDialogOpen(true);
+      return;
+    }
+    pendingSaveRef.current = false;
+    await saveDetails();
   };
 
   useEffect(() => {
@@ -134,10 +131,11 @@ const WalkInClientForm = () => {
       if (!mounted) return;
       const hasSession = !!data.session;
       setAuthed(hasSession);
-      setAuthChecked(true);
-      setAuthDialogOpen(!hasSession);
+      setAuthDialogOpen(false);
       if (hasSession) {
         await loadStorefrontProfile();
+      } else {
+        setClientId(null);
       }
     };
 
@@ -151,8 +149,8 @@ const WalkInClientForm = () => {
         await loadStorefrontProfile();
       } else {
         setClientId(null);
-        setConsentReady(false);
-        setConsentDialogOpen(false);
+        setSubmitted(false);
+        pendingSaveRef.current = false;
       }
     });
 
@@ -161,22 +159,6 @@ const WalkInClientForm = () => {
       listener.subscription.unsubscribe();
     };
   }, []);
-
-  if (!authChecked) {
-    return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
-        <p className="text-sm text-muted-foreground">Preparing secure checkout...</p>
-      </div>
-    );
-  }
-
-  if (loadingProfile) {
-    return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
-        <p className="text-sm text-muted-foreground">Loading your secure profile...</p>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
@@ -198,6 +180,10 @@ const WalkInClientForm = () => {
             </p>
           </div>
         </div>
+
+        {!submitted && loadingProfile ? (
+          <p className="mt-2 text-xs text-muted-foreground">Loading your details…</p>
+        ) : null}
 
         {submitted ? (
           <div className="text-center space-y-4 text-sm">
@@ -311,7 +297,7 @@ const WalkInClientForm = () => {
             </div>
 
             <div className="mt-4 flex justify-end">
-              <Button type="submit" disabled={submitting || !authed || !consentReady}>
+              <Button type="submit" disabled={submitting}>
                 {submitting ? "Saving…" : "Submit details"}
               </Button>
             </div>
@@ -325,29 +311,12 @@ const WalkInClientForm = () => {
           setAuthed(true);
           setAuthDialogOpen(false);
           await loadStorefrontProfile();
+          if (pendingSaveRef.current) {
+            pendingSaveRef.current = false;
+            await saveDetails();
+          }
         }}
         redirectPath="/walk-in"
-      />
-      <StorefrontConsentDialog
-        open={consentDialogOpen}
-        onConfirm={async ({ emailNotifications, smsNotifications, marketingEmails }) => {
-          if (!clientId) {
-            toast.error("Client profile not available.");
-            return;
-          }
-          const nowIso = new Date().toISOString();
-          await storefrontApi.saveClientConsent(clientId, {
-            emailNotifications,
-            smsNotifications,
-            marketingEmails,
-            termsAcceptedAt: nowIso,
-            privacyAcceptedAt: nowIso,
-            consentVersion: "v1",
-          });
-          setConsentReady(true);
-          setConsentDialogOpen(false);
-          toast.success("Consent saved. You can continue checkout.");
-        }}
       />
     </div>
   );
