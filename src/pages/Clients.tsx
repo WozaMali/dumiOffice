@@ -40,7 +40,11 @@ const Clients = () => {
   const { data: officeDisplay = [] } = useQuery<OfficeClientListDisplayRow[]>({
     queryKey: ["customers", "officeDisplay"],
     queryFn: customersApi.fetchOfficeListDisplay,
-    staleTime: 30_000,
+    // Always refresh so /clients immediately reflects updated storefront profile
+    // (names/phones/addresses) for all clients.
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   const [channelTab, setChannelTab] = useState<ClientChannelTab>("All");
