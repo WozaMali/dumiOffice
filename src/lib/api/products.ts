@@ -35,6 +35,32 @@ export const productsApi = {
     return data;
   },
 
+  /** Storefront: fetch product by URL slug (code) */
+  async getByCode(code: string): Promise<Product | null> {
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("code", code)
+      .eq("is_active", true)
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /** Storefront: fetch products by collection (e.g. mens, womens, unisex) */
+  async getByCollectionCode(collectionCode: string): Promise<Product[]> {
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("collection_code", collectionCode)
+      .eq("is_active", true)
+      .order("product_name", { ascending: true });
+
+    if (error) throw error;
+    return data ?? [];
+  },
+
   async create(product: Partial<Product>): Promise<Product> {
     const { data, error } = await supabase
       .from("products")

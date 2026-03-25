@@ -154,6 +154,14 @@ The app should now be running at `http://localhost:8080`
 
 ## Troubleshooting
 
+### Uploading product images fails with: "new row violates row-level security policy"
+
+This means Supabase **Storage RLS** is blocking uploads to the `product_assets` bucket for the current user session.
+
+- Ensure you are **signed in** to the Office app (so your role is `authenticated`, not `anon`)
+- In Supabase Dashboard → SQL Editor, run:
+  - `docs/SUPABASE_RLS_OFFICE_FIX.sql`
+
 ### "Supabase environment variables are missing"
 - Restart your dev server: Stop (Ctrl+C) and run `npm run dev` again
 - Verify `.env` file has no leading spaces on the variable names

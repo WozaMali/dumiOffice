@@ -1,0 +1,66 @@
+-- =============================================================================
+-- Dumi: client & order data — reference (schema: public only)
+-- =============================================================================
+-- Everything defined in the canonical DDL scripts lives in PostgreSQL schema
+-- `public` on Supabase, not in a separate named schema.
+--
+-- Full idempotent DDL + storefront RLS patterns:
+--   docs/SUPABASE_CLIENT_AND_ORDER_SCHEMA.sql
+-- Office CRM sync (storefront → public.customers):
+--   Recommended: docs/SUPABASE_CRM_SYNC_FROM_STORE_RPC.sql (RPC; bypasses fragile RLS on shoppers)
+--   Optional:    docs/SUPABASE_STOREFRONT_CUSTOMERS_SYNC_RLS.sql (policies for direct table writes)
+-- Office Create order prefill from live shop (when CRM address is empty):
+--   docs/SUPABASE_OFFICE_PREFILL_FROM_STORE_RPC.sql
+-- Office Clients table list (name / phone / address column overlay):
+--   docs/SUPABASE_OFFICE_CLIENT_LIST_DISPLAY_RPC.sql
+-- Loyalty tied to office customers (separate from store_clients profile fields):
+--   docs/SUPABASE_LOYALTY_POINTS.sql
+--   docs/STOREFRONT_LOYALTY_AND_SQL.md
+--
+-- -----------------------------------------------------------------------------
+-- Storefront “My Account” (app: src/pages/StoreAccountPage.tsx)
+-- -----------------------------------------------------------------------------
+-- UI area                          Data source
+-- -----------------------------------------------------------------------------
+-- Profile (name, email, phone)    public.store_clients
+--                                  Load/ensure: src/lib/api/storefront/clients.ts → ensureStoreClient()
+--                                  Supabase Auth (auth.users) holds login email/session;
+--                                  store_clients.auth_user_id links to auth.users.id.
+-- Orders count / list             public.store_orders (+ public.store_order_items for line detail)
+-- Addresses                       public.store_client_addresses
+-- Settings / marketing toggles    public.store_client_preferences
+-- -----------------------------------------------------------------------------
+--
+-- Core profile table (excerpt — run full script for constraints, triggers, RLS):
+--
+--   create table if not exists public.store_clients (
+--     id uuid primary key default gen_random_uuid(),
+--     auth_user_id uuid unique references auth.users(id) on delete set null,
+--     full_name text not null,
+--     email text not null unique,
+--     phone text,
+--     member_since_year int not null default extract(year from now())::int,
+--     created_at timestamptz not null default now(),
+--     updated_at timestamptz not null default now()
+--   );
+--
+-- -----------------------------------------------------------------------------
+-- Parallel tables in the same SQL bundle (non–store_ prefix)
+-- -----------------------------------------------------------------------------
+-- public.clients, public.client_addresses, public.orders, public.order_items, etc.
+-- are a checkout-oriented shape in the same script. They are not what the Office
+-- app route /clients reads.
+--
+-- Office /clients UI uses public.customers and public.addresses (see app API:
+-- src/lib/api/customers.ts). Data flow is one-way: storefront store_* → CRM customers/addresses
+-- (not CRM → store). That gives the office a single place to read name, phone, and delivery
+-- for orders after clients save in the shop.
+--
+-- -----------------------------------------------------------------------------
+-- Wishlist & “Client tier” on the account header
+-- -----------------------------------------------------------------------------
+-- Wishlist count may come from app context (e.g. React context) when implemented;
+-- it is not read from store_clients in the current load path.
+-- Display label “Essence” / tier on the account shell may be hardcoded or derived
+-- later from loyalty; tying storefront shoppers to tiers/points uses public.customers
+-- and loyalty tables (see loyalty docs above), not basic profile columns on store_clients.

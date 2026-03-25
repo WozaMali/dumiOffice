@@ -1,10 +1,18 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
-import { Download, Plus, Trash2 } from "lucide-react";
+import PageHero from "@/components/PageHero";
+import { Button } from "@/components/ui/button";
+import { Download, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fragranceApi } from "@/lib/api/fragrance";
-import type { ScentechEthanolProduct, ScentProduct, ScentProforma } from "@/types/database";
+import type {
+  ScentechEthanolProduct,
+  ScentProduct,
+  ScentProforma,
+  ScentProformaExtraLine,
+} from "@/types/database";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
 
 type ScentRow = {
   id?: string;
@@ -50,8 +58,8 @@ type ProFormaRow = {
 
 const OilsPage = () => {
   const [activeTab, setActiveTab] = useState<
-    "pro-forma" | "products" | "listed" | "proformas"
-  >("pro-forma");
+    "dashboard" | "pro-forma" | "products" | "listed" | "proformas"
+  >("dashboard");
   const [productRows, setProductRows] = useState<ScentRow[]>([emptyRow]);
   const [proFormaRows, setProFormaRows] = useState<ProFormaRow[]>([]);
   const [bottles, setBottles] = useState<
@@ -66,10 +74,13 @@ const OilsPage = () => {
   const [printFees, setPrintFees] = useState<
     { name: string; colour: string; type: string; price: string; qty: string }
   >([{ name: "", colour: "", type: "", price: "", qty: "" }]);
+  const [scentSearch, setScentSearch] = useState("");
   const [ethanolRows, setEthanolRows] = useState<
     { id?: string; name: string; liters: string; price: string; qty: string }
   >([{ id: undefined, name: "", liters: "", price: "", qty: "" }]);
   const [selectedProformaId, setSelectedProformaId] = useState<string | null>(null);
+  const [editingProformaId, setEditingProformaId] = useState<string | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -86,6 +97,16 @@ const OilsPage = () => {
   const { data: selectedProformaLines = [], isFetching: isProformaLinesFetching } = useQuery({
     queryKey: ["scentProformaLines", selectedProformaId],
     queryFn: () => fragranceApi.listProformaLines(selectedProformaId as string),
+    enabled: !!selectedProformaId,
+  });
+
+  const {
+    data: selectedProformaExtras = [],
+    isFetching: isProformaExtrasFetching,
+  } = useQuery<ScentProformaExtraLine[]>({
+    queryKey: ["scentProformaExtras", selectedProformaId],
+    queryFn: () =>
+      fragranceApi.listProformaExtras(selectedProformaId as string),
     enabled: !!selectedProformaId,
   });
 
@@ -108,6 +129,196 @@ const OilsPage = () => {
     queryKey: ["ethanolProducts"],
     queryFn: fragranceApi.listEthanolProducts,
   });
+
+  useEffect(() => {
+    const loadRole = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data.user) return;
+        const role = (data.user.user_metadata as any)?.role;
+        if (role === "superadmin") {
+          setIsSuperAdmin(true);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    loadRole();
+  }, []);
+
+  useEffect(() => {
+    if (!editingProformaId) return;
+    if (!selectedProformaLines || selectedProformaLines.length === 0) return;
+
+    // 1) Restore scent rows
+    const mappedRows: ProFormaRow[] = selectedProformaLines.map(
+      (line: any, index: number) => {
+        const productIndex = scentProducts.findIndex(
+          (p) => p.id === line.scent_product_id,
+        );
+
+        return {
+          id: `pf-edit-${line.id ?? index}`,
+          productIndex: productIndex >= 0 ? productIndex : null,
+          qty1kg:
+            line.qty_1kg !== undefined && line.qty_1kg !== null
+              ? String(line.qty_1kg)
+              : "",
+          qty500g:
+            line.qty_500g !== undefined && line.qty_500g !== null
+              ? String(line.qty_500g)
+              : "",
+          qty200g:
+            line.qty_200g !== undefined && line.qty_200g !== null
+              ? String(line.qty_200g)
+              : "",
+          qty100g:
+            line.qty_100g !== undefined && line.qty_100g !== null
+              ? String(line.qty_100g)
+              : "",
+        };
+      },
+    );
+
+    if (mappedRows.length > 0) {
+      setProFormaRows(mappedRows);
+    }
+
+    // 2) Restore packaging / extras into the Pro-Forma editor
+    if (selectedProformaExtras && selectedProformaExtras.length > 0) {
+      const bottleExtras = selectedProformaExtras.filter(
+        (e) => e.kind === "bottle",
+      );
+      if (bottleExtras.length) {
+        setBottles(
+          bottleExtras.map((e) => {
+            const match = bottleProducts.find((b) => b.name === e.name);
+            const qty = Number(e.qty ?? 0) || 0;
+            const unitPrice =
+              qty && e.line_total != null
+                ? Number(e.line_total) / qty
+                : match?.price ?? null;
+            return {
+              id: match?.id,
+              name: e.name,
+              ml: match?.ml != null ? String(match.ml) : "",
+              code: match?.code ?? "",
+              colour: match?.colour ?? "",
+              shape: match?.shape ?? "",
+              price: unitPrice != null ? unitPrice.toFixed(2) : "",
+              qty: qty ? String(qty) : "",
+            };
+          }),
+        );
+      }
+
+      const printExtras = selectedProformaExtras.filter(
+        (e) => e.kind === "print_fee",
+      );
+      if (printExtras.length) {
+        setPrintFees(
+          printExtras.map((e) => {
+            const qty = Number(e.qty ?? 0) || 0;
+            const unitPrice =
+              qty && e.line_total != null
+                ? Number(e.line_total) / qty
+                : null;
+            return {
+              name: e.name,
+              colour: "",
+              type: e.spec ?? "",
+              price: unitPrice != null ? unitPrice.toFixed(2) : "",
+              qty: qty ? String(qty) : "",
+            };
+          }),
+        );
+      }
+
+      const ethanolExtras = selectedProformaExtras.filter(
+        (e) => e.kind === "ethanol",
+      );
+      if (ethanolExtras.length) {
+        setEthanolRows(
+          ethanolExtras.map((e) => {
+            const match = ethanolProducts.find((p) => p.name === e.name);
+            const qty = Number(e.qty ?? 0) || 0;
+            const unitPrice =
+              qty && e.line_total != null
+                ? Number(e.line_total) / qty
+                : match?.price ?? null;
+            return {
+              id: match?.id,
+              name: e.name,
+              liters: match?.liters != null ? String(match.liters) : "",
+              price: unitPrice != null ? unitPrice.toFixed(2) : "",
+              qty: qty ? String(qty) : "",
+            };
+          }),
+        );
+      }
+
+      const pumpExtras = selectedProformaExtras.filter(
+        (e) => e.kind === "pump",
+      );
+      if (pumpExtras.length) {
+        setPumps(
+          pumpExtras.map((e) => {
+            const match = pumpProducts.find((p) => p.name === e.name);
+            const qty = Number(e.qty ?? 0) || 0;
+            const unitPrice =
+              qty && e.line_total != null
+                ? Number(e.line_total) / qty
+                : match?.price ?? null;
+            return {
+              id: match?.id,
+              name: e.name,
+              ml: match?.ml != null ? String(match.ml) : "",
+              code: match?.code ?? "",
+              colour: match?.colour ?? "",
+              price: unitPrice != null ? unitPrice.toFixed(2) : "",
+              qty: qty ? String(qty) : "",
+            };
+          }),
+        );
+      }
+
+      const capExtras = selectedProformaExtras.filter((e) => e.kind === "cap");
+      if (capExtras.length) {
+        setCaps(
+          capExtras.map((e) => {
+            const match = capProducts.find((p) => p.name === e.name);
+            const qty = Number(e.qty ?? 0) || 0;
+            const unitPrice =
+              qty && e.line_total != null
+                ? Number(e.line_total) / qty
+                : match?.price ?? null;
+            return {
+              id: match?.id,
+              name: e.name,
+              ml: match?.ml != null ? String(match.ml) : "",
+              code: match?.code ?? "",
+              colour: match?.colour ?? "",
+              price: unitPrice != null ? unitPrice.toFixed(2) : "",
+              qty: qty ? String(qty) : "",
+            };
+          }),
+        );
+      }
+    }
+
+    setActiveTab("pro-forma");
+    setEditingProformaId(null);
+  }, [
+    editingProformaId,
+    selectedProformaLines,
+    selectedProformaExtras,
+    scentProducts,
+    bottleProducts,
+    pumpProducts,
+    capProducts,
+    ethanolProducts,
+    setActiveTab,
+  ]);
 
   useEffect(() => {
     if (scentProducts.length === 0) return;
@@ -246,9 +457,27 @@ const OilsPage = () => {
         return !hasBrand && !hasItem && !hasAnyPrice;
       };
 
+      const normalizeKey = (brand: string | undefined, item: string | undefined) =>
+        `${(brand || "Dumi Essence").trim().toLowerCase()}|${(item || "").trim().toLowerCase()}`;
+
+      const existingKeys = new Set(
+        scentProducts.map((p) => normalizeKey(p.brand, p.item)),
+      );
+
       await Promise.all(
         rows
           .filter((r) => !isEmptyRow(r))
+          // Skip new rows that would duplicate an existing listed product
+          .filter((r) => {
+            if (r.id) return true;
+            if (!r.item || !r.item.trim()) return false;
+            const key = normalizeKey(r.brand, r.item);
+            if (existingKeys.has(key)) {
+              return false;
+            }
+            existingKeys.add(key);
+            return true;
+          })
           .map((r) =>
             fragranceApi.upsertScentProduct({
               id: r.id,
@@ -622,8 +851,24 @@ const OilsPage = () => {
         throw new Error("No pro-forma lines to create an order.");
       }
 
+      // Auto-generate next reference like DE-000001
+      const existing = await fragranceApi.listProformas();
+      const prefix = "DE-";
+      let maxSeq = 0;
+      existing.forEach((pf) => {
+        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
+        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
+        const num = Number(numPart);
+        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+      });
+      const nextSeq = maxSeq + 1;
+      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+
       const header = {
         name: "Fragrance purchase",
+        customer_name: "ACS Promotions",
+        reference: nextRef,
+        status: "pending" as const,
         subtotal,
         vat,
         total,
@@ -674,7 +919,105 @@ const OilsPage = () => {
         throw new Error("All pro-forma lines are empty.");
       }
 
-      return fragranceApi.createProforma(header, lines);
+      const parseQty = (value: string) => {
+        if (!value) return 0;
+        const cleaned = value.replace(/\s/g, "").replace(",", ".");
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+      };
+
+      const extras = [
+        // Bottles
+        ...bottles
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (!row.name && !totalAmount) return null;
+            const specBits: string[] = [];
+            if (row.ml) specBits.push(`${row.ml}ml`);
+            if (row.code) specBits.push(`Code: ${row.code}`);
+            if (row.colour) specBits.push(row.colour);
+            if (row.shape) specBits.push(row.shape);
+            return {
+              kind: "bottle" as const,
+              name: row.name || "Bottle",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        // Print fees
+        ...printFees
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (!row.name && !totalAmount) return null;
+            const specBits: string[] = [];
+            if (row.colour) specBits.push(row.colour);
+            if (row.type) specBits.push(row.type);
+            return {
+              kind: "print_fee" as const,
+              name: row.name || "Print fee",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        // Ethanol
+        ...ethanolRows
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (!row.name && !totalAmount) return null;
+            const specBits: string[] = [];
+            if (row.liters) specBits.push(`${row.liters}L`);
+            return {
+              kind: "ethanol" as const,
+              name: row.name || "Ethanol",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        // Pumps
+        ...pumps
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (!row.name && !totalAmount) return null;
+            const specBits: string[] = [];
+            if (row.ml) specBits.push(`${row.ml}ml`);
+            if (row.code) specBits.push(`Code: ${row.code}`);
+            if (row.colour) specBits.push(row.colour);
+            return {
+              kind: "pump" as const,
+              name: row.name || "Pump",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        // Caps
+        ...caps
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (!row.name && !totalAmount) return null;
+            const specBits: string[] = [];
+            if (row.ml) specBits.push(`${row.ml}ml`);
+            if (row.code) specBits.push(`Code: ${row.code}`);
+            if (row.colour) specBits.push(row.colour);
+            return {
+              kind: "cap" as const,
+              name: row.name || "Cap",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+      ];
+
+      return fragranceApi.createProforma(header, lines, extras);
     },
     onSuccess: () => {
       toast.success("Order created from pro-forma");
@@ -714,11 +1057,331 @@ const OilsPage = () => {
       toast.message("Loading purchase lines…");
       return;
     }
-    await handleDownloadProformaPdf(
-      selectedProforma,
-      selectedProformaLines,
-      orientation === "portrait" ? "portrait" : "landscape",
+    if (isProformaExtrasFetching) {
+      toast.message("Loading purchase details…");
+      return;
+    }
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({
+      orientation: orientation === "landscape" ? "landscape" : "portrait",
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const lineHeight = 6;
+
+    const loadImage = (src: string) =>
+      new Promise<HTMLImageElement | null>((resolve) => {
+        const img = new Image();
+        img.src = src;
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+      });
+
+    const logoImg = await loadImage("/DUMI ESSENCE logo.png");
+
+    // Header background band
+    doc.setFillColor(20, 20, 20);
+    doc.rect(0, 0, pageWidth, 40, "F");
+
+    // Left-hand wording: brand + tagline
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Dumi Essence", margin, 20);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(220, 220, 220);
+    doc.text("Fragrance & packaging solutions", margin, 26);
+
+    // Centered logo
+    if (logoImg) {
+      const logoHeight = 18;
+      const logoWidth = (logoImg.width / logoImg.height) * logoHeight;
+      const logoX = (pageWidth - logoWidth) / 2;
+      const logoY = 11;
+      doc.addImage(logoImg, "PNG", logoX, logoY, logoWidth, logoHeight);
+    }
+
+    // Address and contacts on the right
+    const infoX = pageWidth - margin;
+    let yInfo = 14;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    ["652 Hashe Street", "Dobsonville", "1863"].forEach((line) => {
+      doc.text(line, infoX, yInfo, { align: "right" });
+      yInfo += 4;
+    });
+
+    yInfo += 2;
+    doc.setFont("helvetica", "bold");
+    doc.text("Contacts", infoX, yInfo, { align: "right" });
+    yInfo += 4;
+    doc.setFont("helvetica", "normal");
+    doc.text("info@dumiessence.co.za", infoX, yInfo, { align: "right" });
+    yInfo += 4;
+    doc.text("072 849 5559", infoX, yInfo, { align: "right" });
+
+    // Separator line under header
+    doc.setDrawColor(200, 170, 90);
+    doc.setLineWidth(0.6);
+    doc.line(margin, 45, pageWidth - margin, 45);
+
+    // Document title and meta (match Pro-Forma tab export)
+    doc.setTextColor(40, 40, 40);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("Oils & Containers Purchase List", margin, 58);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const createdDate = new Date(selectedProforma.created_at).toISOString().slice(0, 10);
+    doc.text(`Generated: ${createdDate}`, margin, 64);
+
+    // Start content area below header
+    let contentY = 80;
+
+    const ensureSpace = (neededHeight: number) => {
+      const bottomMargin = pageHeight - 20;
+      if (contentY + neededHeight > bottomMargin) {
+        doc.addPage();
+        contentY = 30;
+      }
+    };
+
+    // Table layout (Excel-style)
+    const tableX = margin;
+    const tableWidth = pageWidth - margin * 2;
+    const col1Width = tableWidth * 0.4;
+    const col2Width = tableWidth * 0.3;
+    const col3Width = tableWidth * 0.15;
+    const col4Width = tableWidth * 0.15;
+    const colX1 = tableX;
+    const colX2 = tableX + col1Width;
+    const colX3 = colX2 + col2Width;
+    const colX4 = colX3 + col3Width;
+    const rowHeight = 5;
+
+    const drawTableSection = (
+      title: string,
+      headers: [string, string, string, string],
+      rows: { c1: string; c2: string; c3: string; c4: string }[],
+    ) => {
+      // Section heading
+      ensureSpace(rowHeight * 2);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(40, 40, 40);
+      doc.text(title, tableX, contentY);
+      contentY += rowHeight;
+
+      // If no rows, show simple note and skip table/grid
+      if (rows.length === 0) {
+        ensureSpace(rowHeight);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(130, 130, 130);
+        doc.text("No items captured.", tableX, contentY + 3);
+        contentY += rowHeight + 3;
+        contentY += 2;
+        return;
+      }
+
+      // Header row
+      ensureSpace(rowHeight + 2);
+      let yTop = contentY;
+      let yText = yTop + 3.5;
+      doc.setDrawColor(200, 170, 90);
+      doc.setFillColor(245, 245, 245);
+      doc.rect(tableX, yTop, tableWidth, rowHeight, "F");
+      doc.line(colX2, yTop, colX2, yTop + rowHeight);
+      doc.line(colX3, yTop, colX3, yTop + rowHeight);
+      doc.line(colX4, yTop, colX4, yTop + rowHeight);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(40, 40, 40);
+      doc.text(headers[0], colX1 + 2, yText);
+      doc.text(headers[1], colX2 + 2, yText);
+      doc.text(headers[2], colX3 + 2, yText);
+      doc.text(headers[3], colX4 + col4Width - 2, yText, { align: "right" });
+
+      contentY += rowHeight;
+
+      // Data rows
+      rows.forEach((row) => {
+        ensureSpace(rowHeight + 2);
+        yTop = contentY;
+        yText = yTop + 3.5;
+        doc.setDrawColor(220, 220, 220);
+        doc.rect(tableX, yTop, tableWidth, rowHeight);
+        doc.line(colX2, yTop, colX2, yTop + rowHeight);
+        doc.line(colX3, yTop, colX3, yTop + rowHeight);
+        doc.line(colX4, yTop, colX4, yTop + rowHeight);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(40, 40, 40);
+        doc.text(row.c1, colX1 + 2, yText);
+        if (row.c2) doc.text(row.c2, colX2 + 2, yText);
+        if (row.c3) doc.text(row.c3, colX3 + 2, yText);
+        if (row.c4)
+          doc.text(row.c4, colX4 + col4Width - 2, yText, { align: "right" });
+
+        contentY += rowHeight;
+      });
+
+      contentY += 3;
+    };
+
+    // Build rows from stored pro-forma lines (match Pro-Forma scent section)
+    const scentRows = selectedProformaLines
+      .map((line: any) => {
+        const qty1 = Number(line.qty_1kg ?? 0) || 0;
+        const qty5 = Number(line.qty_500g ?? 0) || 0;
+        const qty2 = Number(line.qty_200g ?? 0) || 0;
+        const qty1h = Number(line.qty_100g ?? 0) || 0;
+        if (!qty1 && !qty5 && !qty2 && !qty1h) return null;
+
+        const rowTotalNum = Number(line.row_total ?? 0) || 0;
+
+        const sizeBits: string[] = [];
+        if (qty1) sizeBits.push(`${qty1} × 1kg`);
+        if (qty5) sizeBits.push(`${qty5} × 500g`);
+        if (qty2) sizeBits.push(`${qty2} × 200g`);
+        if (qty1h) sizeBits.push(`${qty1h} × 100g`);
+
+        const brand = line.scent_products?.brand || "Dumi Essence";
+        const item = line.scent_products?.item || "—";
+        const inspiredBits: string[] = [];
+        if (line.scent_products?.inspired_by)
+          inspiredBits.push(line.scent_products.inspired_by);
+        if (line.scent_products?.designer)
+          inspiredBits.push(line.scent_products.designer);
+
+        return {
+          c1: `${brand} – ${item}`,
+          c2: inspiredBits.join(" / "),
+          c3: sizeBits.join(", "),
+          c4: `R${rowTotalNum.toFixed(2)}`,
+        };
+      })
+      .filter((l): l is NonNullable<typeof l> => l !== null);
+
+    drawTableSection(
+      "Scents (Pro-Forma)",
+      ["Product", "Inspired / Designer", "Size & qty", "Row total"],
+      scentRows,
     );
+
+    const extrasOfKind = (kind: ScentProformaExtraLine["kind"]) =>
+      selectedProformaExtras
+        .filter((e) => e.kind === kind)
+        .map((e) => ({
+          c1: e.name,
+          c2: e.spec ?? "",
+          c3: e.qty ? String(e.qty) : "",
+          c4: e.line_total ? `R${e.line_total.toFixed(2)}` : "",
+        }));
+
+    const bottleRows = extrasOfKind("bottle");
+    const printRows = extrasOfKind("print_fee");
+    const ethanolRowsPdf = extrasOfKind("ethanol");
+    const pumpRows = extrasOfKind("pump");
+    const capRows = extrasOfKind("cap");
+
+    if (bottleRows.length) {
+      drawTableSection(
+        "Fragrance bottles",
+        ["Bottle", "Spec", "Qty", "Line total"],
+        bottleRows,
+      );
+    }
+
+    if (printRows.length) {
+      drawTableSection(
+        "Print fees",
+        ["Description", "Spec", "Qty", "Line total"],
+        printRows,
+      );
+    }
+
+    if (ethanolRowsPdf.length) {
+      drawTableSection(
+        "Scentech Ethanol",
+        ["Name", "Spec", "Qty", "Line total"],
+        ethanolRowsPdf,
+      );
+    }
+
+    if (pumpRows.length) {
+      drawTableSection(
+        "Perfume pumps",
+        ["Pump", "Spec", "Qty", "Line total"],
+        pumpRows,
+      );
+    }
+
+    if (capRows.length) {
+      drawTableSection(
+        "Perfume caps",
+        ["Cap", "Spec", "Qty", "Line total"],
+        capRows,
+      );
+    }
+
+    // Summary box: Scents subtotal, Other materials, Subtotal, Total (incl. VAT)
+    const scentsSubtotalPdf = selectedProformaLines.reduce(
+      (sum: number, line: any) =>
+        sum + (Number(line.row_total ?? 0) || 0),
+      0,
+    );
+    const extrasSubtotalPdf = selectedProformaExtras.reduce(
+      (sum: number, e) => sum + (Number(e.line_total ?? 0) || 0),
+      0,
+    );
+    const subtotalPdf = scentsSubtotalPdf + extrasSubtotalPdf;
+    const totalInclVat =
+      Number(selectedProforma.total ?? subtotalPdf) || subtotalPdf;
+
+    const boxWidth = 70;
+    const boxHeight = 4 * lineHeight + 12;
+    const boxX = pageWidth - margin - boxWidth;
+    const bottomMargin = 20;
+    let boxY = pageHeight - bottomMargin - boxHeight;
+
+    if (contentY + 10 > boxY) {
+      doc.addPage();
+      contentY = 30;
+      boxY = pageHeight - bottomMargin - boxHeight;
+    }
+
+    doc.setDrawColor(200, 170, 90);
+    doc.rect(boxX, boxY, boxWidth, boxHeight);
+
+    let summaryY = boxY + 8;
+    const addSummaryLine = (label: string, value: string, bold = false) => {
+      doc.setFont("helvetica", bold ? "bold" : "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(40, 40, 40);
+      doc.text(label, boxX + 3, summaryY);
+      doc.text(value, boxX + boxWidth - 3, summaryY, {
+        align: "right",
+      });
+      summaryY += lineHeight;
+    };
+
+    addSummaryLine("Scents subtotal", `R${scentsSubtotalPdf.toFixed(2)}`);
+    addSummaryLine(
+      "Other materials",
+      `R${extrasSubtotalPdf.toFixed(2)}`,
+    );
+    addSummaryLine("Subtotal", `R${subtotalPdf.toFixed(2)}`);
+    addSummaryLine("Total (incl. VAT)", `R${totalInclVat.toFixed(2)}`, true);
+
+    doc.save(`purchase-history-${selectedProforma.id}.pdf`);
   };
 
   const handleDownloadProformaPdf = async (
@@ -737,7 +1400,7 @@ const OilsPage = () => {
 
     const loadImage = (src: string) =>
       new Promise<HTMLImageElement | null>((resolve) => {
-        const img = new Image();
+    const img = new Image();
         img.src = src;
         img.onload = () => resolve(img);
         img.onerror = () => resolve(null);
@@ -1508,68 +2171,73 @@ const OilsPage = () => {
 
   return (
     <DashboardLayout>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">
-            Fragrance Purchase
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-            Spreadsheet-style list of scents you purchase from suppliers,
-            including Dumi Essence name, inspiration, designer, type and
-            prices per weight.
-          </p>
-        </div>
-        {activeTab === "pro-forma" && (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => handleDownloadPdf("portrait")}
-              className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted"
-            >
-              <Download className="h-4 w-4" />
-              PDF (Portrait)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDownloadPdf("landscape")}
-              className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted"
-            >
-              <Download className="h-4 w-4" />
-              PDF (Landscape)
-            </button>
+      <div className="sourcing-workbench">
+      <PageHero
+        eyebrow="DE Orders"
+        title="DE orders with more ceremony and less spreadsheet fatigue."
+        description="Build pro-formas, curate listed scents, and manage bottles, pumps, caps, ethanol, and sourcing procurement for DE orders in a single premium workbench."
+        actions={
+          <>
+            {activeTab === "pro-forma" && (
+              <>
+                <Button variant="outline" onClick={() => handleDownloadPdf("portrait")}>
+                  <Download className="h-4 w-4" />
+                  PDF portrait
+                </Button>
+                <Button variant="outline" onClick={() => handleDownloadPdf("landscape")}>
+                  <Download className="h-4 w-4" />
+                  PDF landscape
+                </Button>
+              </>
+            )}
+            {activeTab === "proformas" && (
+              <>
+                <Button variant="outline" onClick={() => handleDownloadSelectedHistoryPdf("portrait")}>
+                  <Download className="h-4 w-4" />
+                  Export portrait
+                </Button>
+                <Button variant="outline" onClick={() => handleDownloadSelectedHistoryPdf("landscape")}>
+                  <Download className="h-4 w-4" />
+                  Export landscape
+                </Button>
+              </>
+            )}
+          </>
+        }
+        aside={
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">Listed scents</p>
+              <p className="mt-2 text-3xl font-display font-semibold text-foreground">{scentProducts.length}</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">Saved pro-formas</p>
+              <p className="mt-2 text-3xl font-display font-semibold text-foreground">{scentProformas.length}</p>
+            </div>
           </div>
-        )}
-        {activeTab === "proformas" && (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => handleDownloadSelectedHistoryPdf("portrait")}
-              className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted"
-            >
-              <Download className="h-4 w-4" />
-              Export selected PDF (Portrait)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDownloadSelectedHistoryPdf("landscape")}
-              className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted"
-            >
-              <Download className="h-4 w-4" />
-              Export selected PDF (Landscape)
-            </button>
-          </div>
-        )}
-      </div>
+        }
+      />
 
-      <div className="mb-4 border-b border-border/60">
-        <nav className="flex gap-2 text-sm">
+      <div className="mb-6">
+        <nav className="segmented-tabs text-sm">
+          <button
+            type="button"
+            onClick={() => setActiveTab("dashboard")}
+            className={`segmented-tab ${
+              activeTab === "dashboard"
+                ? "segmented-tab-active"
+                : ""
+            }`}
+          >
+            Dashboard
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab("pro-forma")}
-            className={`px-3 py-1.5 rounded-t-md border-b-2 ${
+            className={`segmented-tab ${
               activeTab === "pro-forma"
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+                ? "segmented-tab-active"
+                : ""
             }`}
           >
             Pro-Forma
@@ -1577,10 +2245,10 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={() => setActiveTab("products")}
-            className={`px-3 py-1.5 rounded-t-md border-b-2 ${
+            className={`segmented-tab ${
               activeTab === "products"
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+                ? "segmented-tab-active"
+                : ""
             }`}
           >
             Products
@@ -1588,10 +2256,10 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={() => setActiveTab("listed")}
-            className={`px-3 py-1.5 rounded-t-md border-b-2 ${
+            className={`segmented-tab ${
               activeTab === "listed"
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+                ? "segmented-tab-active"
+                : ""
             }`}
           >
             Listed Products
@@ -1599,18 +2267,79 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={() => setActiveTab("proformas")}
-            className={`px-3 py-1.5 rounded-t-md border-b-2 ${
+            className={`segmented-tab ${
               activeTab === "proformas"
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+                ? "segmented-tab-active"
+                : ""
             }`}
-          >
-            Purchase history
+            >
+            Order history
           </button>
         </nav>
       </div>
 
-      {activeTab === "pro-forma" ? (
+      {activeTab === "dashboard" ? (
+        <div className="glass-card p-8">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="rounded-xl bg-primary/10 p-3">
+              <LayoutGrid className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">DE Orders Overview</h2>
+              <p className="text-sm text-muted-foreground">Quick access to your sourcing workbench</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+            <button
+              type="button"
+              onClick={() => setActiveTab("pro-forma")}
+              className="rounded-2xl border border-border/60 bg-background/40 p-5 text-left hover:border-primary/50 hover:bg-primary/5 transition-colors"
+            >
+              <p className="luxury-note mb-1">Pro-Forma</p>
+              <p className="text-2xl font-display font-semibold text-foreground">Build</p>
+              <p className="text-xs text-muted-foreground mt-1">Create new pro-formas</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("listed")}
+              className="rounded-2xl border border-border/60 bg-background/40 p-5 text-left hover:border-primary/50 hover:bg-primary/5 transition-colors"
+            >
+              <p className="luxury-note mb-1">Listed Scents</p>
+              <p className="text-2xl font-display font-semibold text-foreground">{scentProducts.length}</p>
+              <p className="text-xs text-muted-foreground mt-1">Curated products</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("proformas")}
+              className="rounded-2xl border border-border/60 bg-background/40 p-5 text-left hover:border-primary/50 hover:bg-primary/5 transition-colors"
+            >
+              <p className="luxury-note mb-1">Saved Pro-Formas</p>
+              <p className="text-2xl font-display font-semibold text-foreground">{scentProformas.length}</p>
+              <p className="text-xs text-muted-foreground mt-1">Order history</p>
+            </button>
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-5">
+              <p className="luxury-note mb-1">Bottles</p>
+              <p className="text-2xl font-display font-semibold text-foreground">{bottleProducts.length}</p>
+              <p className="text-xs text-muted-foreground mt-1">Available</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-5">
+              <p className="luxury-note mb-1">Pumps & Caps</p>
+              <p className="text-2xl font-display font-semibold text-foreground">{pumpProducts.length + capProducts.length}</p>
+              <p className="text-xs text-muted-foreground mt-1">Packaging</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-5">
+              <p className="luxury-note mb-1">Ethanol</p>
+              <p className="text-2xl font-display font-semibold text-foreground">{ethanolProducts.length}</p>
+              <p className="text-xs text-muted-foreground mt-1">Products</p>
+            </div>
+          </div>
+          <div className="pt-4 border-t border-border/60">
+            <p className="text-sm text-muted-foreground">
+              Use the tabs above to build pro-formas, manage products, curate listed scents, or view order history.
+            </p>
+          </div>
+        </div>
+      ) : activeTab === "pro-forma" ? (
         <>
       <div className="glass-card overflow-x-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
@@ -1626,6 +2355,13 @@ const OilsPage = () => {
             <span className="text-[11px] text-muted-foreground">
               Listed products: {scentProducts.length}
             </span>
+            <input
+              type="text"
+              value={scentSearch}
+              onChange={(e) => setScentSearch(e.target.value)}
+              placeholder="Search scents…"
+              className="hidden md:block h-8 w-44 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-[11px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
             <button
               type="button"
               onClick={addProFormaRow}
@@ -1642,6 +2378,9 @@ const OilsPage = () => {
           <table className="min-w-full text-xs">
             <thead className="bg-muted/60 sticky top-0 z-10">
               <tr>
+                <th className="px-3 py-2 text-center font-semibold text-muted-foreground border-b border-border/70 w-10">
+                  #
+                </th>
                 <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
                   Dumi Essence
                 </th>
@@ -1704,6 +2443,9 @@ const OilsPage = () => {
                     key={pfRow.id}
                     className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
                   >
+                  <td className="px-3 py-2 border-b border-border/40 text-center text-xs text-muted-foreground">
+                    {index + 1}
+                  </td>
                   <td className="px-3 py-2 border-b border-border/40">
                     <select
                       className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1719,11 +2461,37 @@ const OilsPage = () => {
                       }
                     >
                       <option value="">Select product…</option>
-                      {scentProducts.map((p, i) => (
-                        <option key={p.id} value={i}>
+                      {(() => {
+                        const seenKeys = new Set<string>();
+                        const term = scentSearch.trim().toLowerCase();
+                        const matchesFilter = (p: ScentProduct) => {
+                          if (!term) return true;
+                          const haystack = [
+                            p.brand,
+                            p.item,
+                            p.inspired_by,
+                            p.designer,
+                            p.scent_type,
+                          ]
+                            .filter(Boolean)
+                            .join(" ")
+                            .toLowerCase();
+                          return haystack.includes(term);
+                        };
+                        return scentProducts.map((p, i) => {
+                          const key = `${(p.brand || "Dumi Essence")
+                            .trim()
+                            .toLowerCase()}|${p.item.trim().toLowerCase()}`;
+                          if (seenKeys.has(key)) return null;
+                          if (!matchesFilter(p)) return null;
+                          seenKeys.add(key);
+                          return (
+                            <option key={p.id} value={i}>
                           {p.brand} – {p.item}
                         </option>
-                      ))}
+                          );
+                        });
+                      })()}
                     </select>
                   </td>
                   <td className="px-3 py-2 border-b border-border/40 text-xs text-muted-foreground">
@@ -1822,6 +2590,9 @@ const OilsPage = () => {
           <table className="min-w-full text-xs">
             <thead className="bg-muted/60 sticky top-0 z-10">
               <tr>
+                <th className="px-3 py-2 text-center font-semibold text-muted-foreground border-b border-border/70 w-10">
+                  #
+                </th>
                 <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
                   Bottle name
                 </th>
@@ -1854,6 +2625,9 @@ const OilsPage = () => {
                   key={index}
                   className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
                 >
+                  <td className="px-3 py-2 border-b border-border/40 text-center text-xs text-muted-foreground">
+                    {index + 1}
+                  </td>
                   <td className="px-3 py-2 border-b border-border/40">
                     <select
                       className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -3575,7 +4349,7 @@ const OilsPage = () => {
             <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
               <div>
                 <h2 className="text-sm font-semibold text-foreground">
-                  Fragrance purchase history
+                  Fragrance order history
                 </h2>
                 <p className="text-xs text-muted-foreground">
                   Previously created fragrance purchase pro-formas.
@@ -3590,13 +4364,13 @@ const OilsPage = () => {
                       Name
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                      Customer
+                      Supplier
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
                       Reference
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                      Valid until
+                      Status
                     </th>
                     <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
                       Subtotal
@@ -3636,7 +4410,7 @@ const OilsPage = () => {
                         {pf.reference || "—"}
                       </td>
                       <td className="px-3 py-2 border-b border-border/40">
-                        {pf.valid_until || "—"}
+                        {pf.status === "approved" ? "Approved" : "Pending"}
                       </td>
                       <td className="px-3 py-2 border-b border-border/40 text-right">
                         {pf.subtotal.toFixed(2)}
@@ -3660,13 +4434,55 @@ const OilsPage = () => {
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteProformaMutation.mutate(pf.id)}
-                          className="inline-flex items-center gap-1 rounded-md border border-destructive/60 px-2 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10"
-                          disabled={deleteProformaMutation.isPending}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (pf.status === "approved") {
+                              toast.message("Approved orders cannot be edited.");
+                              return;
+                            }
+                            setSelectedProformaId(pf.id);
+                            setEditingProformaId(pf.id);
+                            setActiveTab("pro-forma");
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-60"
+                          disabled={pf.status === "approved"}
                         >
-                          <Trash2 className="h-3 w-3" />
-                          Delete
+                          Edit
                         </button>
+                        {isSuperAdmin && pf.status !== "approved" && (
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await fragranceApi.updateProforma(pf.id, {
+                                  status: "approved",
+                                });
+                                queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
+                                toast.success("Order approved and marked as complete.");
+                              } catch (err: any) {
+                                toast.error(err.message || "Failed to approve order");
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                          >
+                            Approve &amp; complete
+                          </button>
+                        )}
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteProformaMutation.mutate(pf.id);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md border border-destructive/60 px-2 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10"
+                            disabled={deleteProformaMutation.isPending}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Delete
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -3676,14 +4492,14 @@ const OilsPage = () => {
           </div>
 
           {selectedProformaId && selectedProforma && (
-            <div className="fixed inset-0 z-50">
-              <button
-                type="button"
-                className="absolute inset-0 bg-black/60"
-                onClick={() => setSelectedProformaId(null)}
-              />
+          <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/60"
+              onClick={() => setSelectedProformaId(null)}
+            />
 
-              <div className="relative mx-auto mt-10 w-[min(1100px,95vw)] rounded-lg border border-border bg-background shadow-xl">
+            <div className="relative w-[min(1100px,95vw)] rounded-lg border border-border bg-background shadow-xl">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
                   <div>
                     <h2 className="text-sm font-semibold text-foreground">
@@ -3692,6 +4508,10 @@ const OilsPage = () => {
                     <p className="text-xs text-muted-foreground">
                       Pro-forma created on{" "}
                       {new Date(selectedProforma.created_at).toLocaleString()}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Supplier: {selectedProforma.customer_name || "ACS Promotions"} · Reference:{" "}
+                      {selectedProforma.reference || "—"}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -3702,11 +4522,7 @@ const OilsPage = () => {
                           toast.message("Loading order lines…");
                           return;
                         }
-                        handleDownloadProformaPdf(
-                          selectedProforma,
-                          selectedProformaLines,
-                          "landscape",
-                        );
+                        handleDownloadSelectedHistoryPdf("landscape");
                       }}
                       className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-foreground shadow-sm hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
                       disabled={isProformaLinesFetching}
@@ -3721,11 +4537,7 @@ const OilsPage = () => {
                           toast.message("Loading order lines…");
                           return;
                         }
-                        handleDownloadProformaPdf(
-                          selectedProforma,
-                          selectedProformaLines,
-                          "portrait",
-                        );
+                        handleDownloadSelectedHistoryPdf("portrait");
                       }}
                       className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-foreground shadow-sm hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
                       disabled={isProformaLinesFetching}
@@ -3763,12 +4575,12 @@ const OilsPage = () => {
                         R{selectedProforma.total.toFixed(2)}
                       </div>
                     </div>
-                    <div className="rounded-md border border-border/60 p-3">
-                      <div className="text-muted-foreground">Reference</div>
-                      <div className="font-semibold text-foreground">
-                        {selectedProforma.reference || "—"}
-                      </div>
+                  <div className="rounded-md border border-border/60 p-3">
+                    <div className="text-muted-foreground">Supplier</div>
+                    <div className="font-semibold text-foreground">
+                      {selectedProforma.customer_name || "—"}
                     </div>
+                  </div>
                   </div>
 
                   <div className="rounded-md border border-border/60 overflow-hidden">
@@ -3777,75 +4589,194 @@ const OilsPage = () => {
                         Line items
                       </div>
                       <div className="text-[11px] text-muted-foreground">
-                        {isProformaLinesFetching
+                        {isProformaLinesFetching || isProformaExtrasFetching
                           ? "Loading…"
-                          : `${selectedProformaLines.length} lines`}
+                          : ""}
                       </div>
                     </div>
-                    <div className="max-h-[55vh] overflow-auto">
-                      <table className="min-w-full text-xs">
-                        <thead className="bg-muted/60 sticky top-0 z-10">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                              Brand
-                            </th>
-                            <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                              Item
-                            </th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                              Qty 1kg
-                            </th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                              Qty 500g
-                            </th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                              Qty 200g
-                            </th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                              Qty 100g
-                            </th>
-                            <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                              Row total
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedProformaLines.map(
-                            (line: any, index: number) => (
-                              <tr
-                                key={line.id}
-                                className={
-                                  index % 2 === 0 ? "bg-background" : "bg-muted/40"
-                                }
-                              >
-                                <td className="px-3 py-2 border-b border-border/40">
-                                  {line.scent_products?.brand || "—"}
-                                </td>
-                                <td className="px-3 py-2 border-b border-border/40">
-                                  {line.scent_products?.item || "—"}
-                                </td>
-                                <td className="px-3 py-2 border-b border-border/40 text-right">
-                                  {line.qty_1kg}
-                                </td>
-                                <td className="px-3 py-2 border-b border-border/40 text-right">
-                                  {line.qty_500g}
-                                </td>
-                                <td className="px-3 py-2 border-b border-border/40 text-right">
-                                  {line.qty_200g}
-                                </td>
-                                <td className="px-3 py-2 border-b border-border/40 text-right">
-                                  {line.qty_100g}
-                                </td>
-                                <td className="px-3 py-2 border-b border-border/40 text-right">
-                                  {line.row_total?.toFixed
-                                    ? line.row_total.toFixed(2)
-                                    : Number(line.row_total || 0).toFixed(2)}
-                                </td>
+                    <div className="max-h-[55vh] overflow-auto p-3 space-y-4">
+                      {/* Scents (Pro-Forma) */}
+                      {selectedProformaLines.some((line: any) => {
+                        const q1 = Number(line.qty_1kg ?? 0) || 0;
+                        const q5 = Number(line.qty_500g ?? 0) || 0;
+                        const q2 = Number(line.qty_200g ?? 0) || 0;
+                        const qh = Number(line.qty_100g ?? 0) || 0;
+                        const rowTotal = Number(line.row_total ?? 0) || 0;
+                        return q1 || q5 || q2 || qh || rowTotal;
+                      }) && (
+                        <div>
+                          <div className="text-xs font-semibold text-foreground mb-2">
+                            Scents (Pro-Forma)
+                          </div>
+                          <table className="min-w-full text-xs">
+                            <thead className="bg-muted/60 sticky top-0 z-10">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                                  Product
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                                  Inspired / Designer
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                                  Size & qty
+                                </th>
+                                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                                  Row total
+                                </th>
                               </tr>
-                            ),
-                          )}
-                        </tbody>
-                      </table>
+                            </thead>
+                            <tbody>
+                              {selectedProformaLines
+                                .map((line: any, index: number) => {
+                                  const brand =
+                                    line.scent_products?.brand || "Dumi Essence";
+                                  const item =
+                                    line.scent_products?.item || "—";
+                                  const qty1 =
+                                    Number(line.qty_1kg ?? 0) || 0;
+                                  const qty5 =
+                                    Number(line.qty_500g ?? 0) || 0;
+                                  const qty2 =
+                                    Number(line.qty_200g ?? 0) || 0;
+                                  const qtyh =
+                                    Number(line.qty_100g ?? 0) || 0;
+                                  const rowTotalNum =
+                                    Number(line.row_total ?? 0) || 0;
+
+                                  if (!qty1 && !qty5 && !qty2 && !qtyh && !rowTotalNum) {
+                                    return null;
+                                  }
+
+                                  const sizeBits: string[] = [];
+                                  if (qty1) sizeBits.push(`${qty1} × 1kg`);
+                                  if (qty5) sizeBits.push(`${qty5} × 500g`);
+                                  if (qty2) sizeBits.push(`${qty2} × 200g`);
+                                  if (qtyh) sizeBits.push(`${qtyh} × 100g`);
+
+                                  const inspiredBits: string[] = [];
+                                  if (line.scent_products?.inspired_by)
+                                    inspiredBits.push(
+                                      line.scent_products.inspired_by,
+                                    );
+                                  if (line.scent_products?.designer)
+                                    inspiredBits.push(
+                                      line.scent_products.designer,
+                                    );
+
+                                  return (
+                                    <tr
+                                      key={line.id}
+                                      className={
+                                        index % 2 === 0
+                                          ? "bg-background"
+                                          : "bg-muted/40"
+                                      }
+                                    >
+                                      <td className="px-3 py-2 border-b border-border/40">
+                                        {brand} – {item}
+                                      </td>
+                                      <td className="px-3 py-2 border-b border-border/40">
+                                        {inspiredBits.join(" / ") || "—"}
+                                      </td>
+                                      <td className="px-3 py-2 border-b border-border/40">
+                                        {sizeBits.join(", ")}
+                                      </td>
+                                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                                        R{rowTotalNum.toFixed(2)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                                .filter(Boolean)}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Helper to render extras by kind */}
+                      {(["bottle", "print_fee", "ethanol", "pump", "cap"] as const).map(
+                        (kind) => {
+                          const titleMap: Record<
+                            typeof kind,
+                            string
+                          > = {
+                            bottle: "Fragrance bottles",
+                            print_fee: "Print fees",
+                            ethanol: "Scentech Ethanol",
+                            pump: "Perfume pumps",
+                            cap: "Perfume caps",
+                          };
+
+                          const rows = selectedProformaExtras
+                            .filter((e) => e.kind === kind)
+                            .filter(
+                              (e) =>
+                                (e.qty ?? 0) !== 0 ||
+                                (e.line_total ?? 0) !== 0,
+                            );
+
+                          if (!rows.length) return null;
+
+                          return (
+                            <div key={kind}>
+                              <div className="text-xs font-semibold text-foreground mb-2">
+                                {titleMap[kind]}
+                              </div>
+                              <table className="min-w-full text-xs">
+                                <thead className="bg-muted/60 sticky top-0 z-10">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                                      {kind === "bottle"
+                                        ? "Bottle"
+                                        : kind === "ethanol"
+                                        ? "Name"
+                                        : kind === "pump"
+                                        ? "Pump"
+                                        : kind === "cap"
+                                        ? "Cap"
+                                        : "Description"}
+                                    </th>
+                                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                                      Spec
+                                    </th>
+                                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                                      Qty
+                                    </th>
+                                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                                      Line total
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {rows.map((row, index) => (
+                                    <tr
+                                      key={row.id}
+                                      className={
+                                        index % 2 === 0
+                                          ? "bg-background"
+                                          : "bg-muted/40"
+                                      }
+                                    >
+                                      <td className="px-3 py-2 border-b border-border/40">
+                                        {row.name}
+                                      </td>
+                                      <td className="px-3 py-2 border-b border-border/40">
+                                        {row.spec || "—"}
+                                      </td>
+                                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                                        {row.qty}
+                                      </td>
+                                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                                        R{(row.line_total ?? 0).toFixed(2)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          );
+                        },
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3854,6 +4785,7 @@ const OilsPage = () => {
           )}
         </>
       )}
+      </div>
     </DashboardLayout>
   );
 };

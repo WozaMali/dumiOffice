@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 
 type AuthStatus = "checking" | "authed" | "unauth";
+
+const isOfficeUser = (user: User | null | undefined) => {
+  const role = user?.user_metadata?.role;
+  return role === "superadmin" || role === "admin" || role === "manager";
+};
 
 const AuthGate = () => {
   const [status, setStatus] = useState<AuthStatus>("checking");
@@ -16,7 +22,10 @@ const AuthGate = () => {
       const { data, error } = await supabase.auth.getSession();
       if (!isMounted) return;
 
-      if (error || !data.session) {
+      if (error || !data.session || !isOfficeUser(data.session.user)) {
+        if (data.session && !isOfficeUser(data.session.user)) {
+          await supabase.auth.signOut();
+        }
         setStatus("unauth");
         if (location.pathname !== "/login") {
           navigate("/login", { replace: true });
@@ -30,12 +39,15 @@ const AuthGate = () => {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!isMounted) return;
-      if (session) {
+      if (session && isOfficeUser(session.user)) {
         setStatus("authed");
         if (location.pathname === "/login") {
           navigate("/", { replace: true });
         }
       } else {
+        if (session && !isOfficeUser(session.user)) {
+          supabase.auth.signOut().catch(() => undefined);
+        }
         setStatus("unauth");
         if (location.pathname !== "/login") {
           navigate("/login", { replace: true });

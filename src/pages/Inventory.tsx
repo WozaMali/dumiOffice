@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
+import PageHero from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -9,15 +10,22 @@ import { Package, AlertTriangle, Search, ArrowUpDown, Edit, Download, CheckCircl
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { productsApi } from "@/lib/api/products";
 import { inventoryApi } from "@/lib/api/inventory";
-import type { Product, ProductCategory } from "@/types/database";
+import { fragranceApi } from "@/lib/api/fragrance";
+import type { Product, ProductCategory, ScentProduct } from "@/types/database";
 import { toast } from "sonner";
 import { downloadCSV, generateProductsCSV } from "@/lib/utils/bulk-actions";
+import { generateInventoryPDF } from "@/lib/utils/inventory-pdf";
 
 const Inventory = () => {
   const queryClient = useQueryClient();
   const { data: items = [], isLoading, error, refetch } = useQuery<Product[]>({
     queryKey: ["products"],
     queryFn: productsApi.list,
+  });
+
+  const { data: scentProducts = [] } = useQuery<ScentProduct[]>({
+    queryKey: ["scentProducts"],
+    queryFn: fragranceApi.listScentProducts,
   });
 
   const [search, setSearch] = useState("");
@@ -43,11 +51,17 @@ const Inventory = () => {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
+  const [selectedScentId, setSelectedScentId] = useState<string>("");
   const [form, setForm] = useState({
     product_name: "",
+    brand: "",
+    item: "",
+    inspired_by: "",
+    designer: "",
     product_category: "Perfume" as ProductCategory,
     product_type: "",
     sku: "",
+    price: "0",
     stock_on_hand: "0",
     stock_threshold: "5",
     description: "",
@@ -122,12 +136,47 @@ const Inventory = () => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const generateSkuFromScent = (scent: ScentProduct): string => {
+    const brandPart =
+      (scent.brand || "DE")
+        .split(" ")
+        .map((p) => p[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 3) || "DE";
+    const itemPart =
+      (scent.item || "ITEM").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4) || "ITEM";
+    const random = Math.floor(100 + Math.random() * 900); // 100-999
+    return `DE-${brandPart}${itemPart}-${random}`;
+  };
+
+  const handleSelectScent = (scentId: string) => {
+    setSelectedScentId(scentId);
+    if (!scentId) return;
+    const scent = scentProducts.find((s) => s.id === scentId);
+    if (!scent) return;
+    setForm((prev) => ({
+      ...prev,
+      brand: scent.brand || prev.brand,
+      item: scent.item || prev.item,
+      inspired_by: scent.inspired_by || prev.inspired_by,
+      designer: scent.designer || prev.designer,
+      product_name: prev.product_name || scent.item || prev.product_name,
+      sku: prev.sku || generateSkuFromScent(scent),
+    }));
+  };
+
   const resetForm = () => {
     setForm({
       product_name: "",
+      brand: "",
+      item: "",
+      inspired_by: "",
+      designer: "",
       product_category: "Perfume",
       product_type: "",
       sku: "",
+      price: "0",
       stock_on_hand: "0",
       stock_threshold: "5",
       description: "",
@@ -138,9 +187,14 @@ const Inventory = () => {
     setEditingProduct(product);
     setForm({
       product_name: product.product_name,
+      brand: product.brand || "",
+      item: product.item || "",
+      inspired_by: product.inspired_by || "",
+      designer: product.designer || "",
       product_category: product.product_category,
       product_type: product.product_type || "",
       sku: product.sku,
+      price: product.price.toString(),
       stock_on_hand: product.stock_on_hand.toString(),
       stock_threshold: product.stock_threshold.toString(),
       description: product.description || "",
@@ -206,13 +260,18 @@ const Inventory = () => {
 
     const stock = Number(form.stock_on_hand) || 0;
     const threshold = Number(form.stock_threshold) || 0;
+    const price = Number(form.price) || 0;
 
     const newItem: Partial<Product> = {
       product_name: form.product_name.trim(),
+      brand: form.brand.trim() || undefined,
+      item: form.item.trim() || undefined,
+      inspired_by: form.inspired_by.trim() || undefined,
+      designer: form.designer.trim() || undefined,
       product_category: form.product_category,
       product_type: form.product_type.trim() || undefined,
       sku: form.sku.trim(),
-      price: 0,
+      price,
       stock_on_hand: stock,
       stock_threshold: threshold,
       description: form.description.trim() || undefined,
@@ -228,12 +287,18 @@ const Inventory = () => {
 
     const stock = Number(form.stock_on_hand) || 0;
     const threshold = Number(form.stock_threshold) || 0;
+    const price = Number(form.price) || 0;
 
     const updates: Partial<Product> = {
       product_name: form.product_name.trim(),
+      brand: form.brand.trim() || undefined,
+      item: form.item.trim() || undefined,
+      inspired_by: form.inspired_by.trim() || undefined,
+      designer: form.designer.trim() || undefined,
       product_category: form.product_category,
       product_type: form.product_type.trim() || undefined,
       sku: form.sku.trim(),
+      price,
       stock_on_hand: stock,
       stock_threshold: threshold,
       description: form.description.trim() || undefined,
@@ -348,51 +413,79 @@ const Inventory = () => {
 
   return (
     <DashboardLayout>
+      <div className="ops-workspace">
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <motion.h1
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="text-2xl font-semibold text-foreground"
-            >
-              Inventory Management
-            </motion.h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Manage stock levels for perfumes, diffusers and car perfumes.
-            </p>
-          </div>
-          <DialogTrigger asChild>
-            <Button className="px-4 py-2">+ Add product</Button>
-          </DialogTrigger>
-        </div>
+        <PageHero
+          eyebrow="Stock"
+          title="Availability, thresholds, and stock checks in one view."
+          description="Track the formats that keep the house ready for every order, with clearer hierarchy for replenishment, adjustment, and collection readiness."
+          actions={
+            <>
+              <DialogTrigger asChild>
+                <Button>
+                  <Package className="h-4 w-4" />
+                  Add product
+                </Button>
+              </DialogTrigger>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await generateInventoryPDF(filteredItems);
+                    toast.success("Inventory PDF exported.");
+                  } catch (err: unknown) {
+                    toast.error((err as Error)?.message || "Failed to export PDF");
+                  }
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Export PDF
+              </Button>
+              <Button variant="outline" onClick={() => setAdjustmentPanelOpen((o) => !o)}>
+                Adjust stock
+              </Button>
+            </>
+          }
+          aside={
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+                <p className="luxury-note">SKUs</p>
+                <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totalProducts}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+                <p className="luxury-note">Low stock</p>
+                <p className="mt-2 text-3xl font-display font-semibold text-foreground">{lowStockCount}</p>
+              </div>
+            </div>
+          }
+        />
 
         {/* Overview metrics */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs flex-1 min-w-0">
-            <div className="glass-card px-4 py-3 flex flex-col gap-1">
-              <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Total products</span>
-              <span className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <div className="metric-card">
+              <span className="metric-label">Total products</span>
+              <span className="metric-value flex items-center gap-2 text-[2.15rem]">
                 <Package className="h-4 w-4 text-primary" />
                 {totalProducts}
               </span>
-              <span className="text-muted-foreground text-[11px]">Active SKUs</span>
+              <span className="metric-note">Active SKUs</span>
             </div>
-            <div className="glass-card px-4 py-3 flex flex-col gap-1">
-              <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Total units</span>
-              <span className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <div className="metric-card">
+              <span className="metric-label">Total units</span>
+              <span className="metric-value flex items-center gap-2 text-[2.15rem]">
                 <Target className="h-4 w-4 text-primary" />
                 {totalUnits}
               </span>
-              <span className="text-muted-foreground text-[11px]">In inventory</span>
+              <span className="metric-note">In inventory</span>
             </div>
-            <div className="glass-card px-4 py-3 flex flex-col gap-1">
-              <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Low stock alerts</span>
-              <span className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <div className="metric-card">
+              <span className="metric-label">Low stock alerts</span>
+              <span className="metric-value flex items-center gap-2 text-[2.15rem]">
                 <AlertTriangle className="h-4 w-4 text-primary" />
                 {lowStockCount}
               </span>
-              <span className="text-muted-foreground text-[11px]">Items below threshold</span>
+              <span className="metric-note">Items below threshold</span>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -408,11 +501,11 @@ const Inventory = () => {
 
         {/* Stock Adjustment section */}
         {adjustmentPanelOpen && (
-          <div className="glass-card rounded-lg border border-border p-4 mb-6">
+          <div className="editorial-panel mb-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-semibold text-foreground">Stock Adjustment</h2>
-                <p className="text-sm text-muted-foreground">Adjust inventory levels for materials.</p>
+                <h2 className="section-title text-[1.75rem]">Stock Adjustment</h2>
+                <p className="section-copy">Adjust stock levels for materials and finished goods with a clearer ritual flow.</p>
               </div>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => setAdjustmentPanelOpen(false)}>
@@ -426,15 +519,13 @@ const Inventory = () => {
                 </Button>
               </div>
             </div>
-            <div className="flex gap-1 border-b border-border mb-4">
+            <div className="segmented-tabs mb-4 border-0">
               {(["Details", "Items", "Location", "Valuation", "Notes"] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
-                  className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-                    adjustmentTab === tab
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  className={`segmented-tab ${
+                    adjustmentTab === tab ? "segmented-tab-active" : ""
                   }`}
                   onClick={() => setAdjustmentTab(tab)}
                 >
@@ -576,7 +667,7 @@ const Inventory = () => {
           <form onSubmit={handleAddProduct} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="product_name">Product name *</Label>
+                <Label htmlFor="product_name">DE Name *</Label>
                 <Input id="product_name" value={form.product_name} onChange={(e) => handleChange("product_name", e.target.value)} required />
               </div>
               <div className="space-y-2">
@@ -593,7 +684,48 @@ const Inventory = () => {
                 </select>
               </div>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="scent_product">Use from Listed Products (Oils)</Label>
+              <select
+                id="scent_product"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={selectedScentId}
+                onChange={(e) => handleSelectScent(e.target.value)}
+              >
+                <option value="">Select fragrance (optional)</option>
+                {scentProducts.map((scent) => (
+                  <option key={scent.id} value={scent.id}>
+                    {scent.brand} – {scent.item}
+                    {scent.inspired_by ? ` (${scent.inspired_by})` : ""}{" "}
+                    {scent.designer ? `- ${scent.designer}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                This will fill Brand, Item, Inspired By, Designer and suggest a SKU, which you can still edit.
+              </p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="brand">Brand</Label>
+                <Input id="brand" value={form.brand} onChange={(e) => handleChange("brand", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="item">Item</Label>
+                <Input id="item" value={form.item} onChange={(e) => handleChange("item", e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="inspired_by">Inspired By</Label>
+                <Input id="inspired_by" value={form.inspired_by} onChange={(e) => handleChange("inspired_by", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="designer">Designer</Label>
+                <Input id="designer" value={form.designer} onChange={(e) => handleChange("designer", e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="sku">SKU *</Label>
                 <Input id="sku" value={form.sku} onChange={(e) => handleChange("sku", e.target.value)} required />
@@ -601,6 +733,17 @@ const Inventory = () => {
               <div className="space-y-2">
                 <Label htmlFor="product_type">Type / variant</Label>
                 <Input id="product_type" placeholder="e.g. EDP 50ml" value={form.product_type} onChange={(e) => handleChange("product_type", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="price">Price (R)</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.price}
+                  onChange={(e) => handleChange("price", e.target.value)}
+                />
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -644,7 +787,7 @@ const Inventory = () => {
           <form onSubmit={handleUpdateProduct} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit_product_name">Product name *</Label>
+                <Label htmlFor="edit_product_name">DE Name *</Label>
                 <Input id="edit_product_name" value={form.product_name} onChange={(e) => handleChange("product_name", e.target.value)} required />
               </div>
               <div className="space-y-2">
@@ -663,12 +806,43 @@ const Inventory = () => {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
+                <Label htmlFor="edit_brand">Brand</Label>
+                <Input id="edit_brand" value={form.brand} onChange={(e) => handleChange("brand", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_item">Item</Label>
+                <Input id="edit_item" value={form.item} onChange={(e) => handleChange("item", e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit_inspired_by">Inspired By</Label>
+                <Input id="edit_inspired_by" value={form.inspired_by} onChange={(e) => handleChange("inspired_by", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_designer">Designer</Label>
+                <Input id="edit_designer" value={form.designer} onChange={(e) => handleChange("designer", e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
                 <Label htmlFor="edit_sku">SKU *</Label>
                 <Input id="edit_sku" value={form.sku} onChange={(e) => handleChange("sku", e.target.value)} required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit_product_type">Type / variant</Label>
                 <Input id="edit_product_type" value={form.product_type} onChange={(e) => handleChange("product_type", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_price">Price (R)</Label>
+                <Input
+                  id="edit_price"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.price}
+                  onChange={(e) => handleChange("price", e.target.value)}
+                />
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -792,9 +966,9 @@ const Inventory = () => {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="glass-card px-4 py-3 mb-4 flex items-center justify-between"
+          className="toolbar-panel mb-4"
         >
-          <span className="text-xs text-foreground">
+          <span className="luxury-note">
             {selectedIds.length} products selected
           </span>
           <div className="flex gap-2">
@@ -831,21 +1005,40 @@ const Inventory = () => {
       )}
 
       {/* Current Inventory */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h2 className="text-lg font-semibold text-foreground">Current Inventory</h2>
+      <div className="section-header">
+        <div>
+          <h2 className="section-title">Current inventory</h2>
+          <p className="section-copy">Search by fragrance, format, brand, or status to review the house stock posture.</p>
+        </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                await generateInventoryPDF(filteredItems);
+                toast.success("Inventory PDF exported.");
+              } catch (err: unknown) {
+                toast.error((err as Error)?.message || "Failed to export PDF");
+              }
+            }}
+            className="gap-1.5"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export PDF
+          </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() => {
               const csv = generateProductsCSV(filteredItems);
               downloadCSV(csv, "inventory.csv");
-              toast.success("Export started");
+              toast.success("CSV export started");
             }}
             className="gap-1.5"
           >
             <Download className="h-3.5 w-3.5" />
-            Export
+            Export CSV
           </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" />
@@ -855,20 +1048,20 @@ const Inventory = () => {
       </div>
 
       {/* Search & filters */}
-      <div className="glass-card p-4 mb-6 flex flex-col md:flex-row md:items-center gap-4">
-        <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50">
-          <Search size={16} className="text-muted-foreground" />
-          <input
+      <div className="toolbar-panel mb-6">
+        <div className="relative flex-1">
+          <Search size={16} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-primary" />
+          <Input
             type="text"
             placeholder="Search by name, SKU or category..."
-            className="bg-transparent border-none outline-none text-sm text-foreground placeholder:text-muted-foreground w-full"
+            className="w-full pl-11"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <div className="flex gap-2">
           <select
-            className="h-9 rounded-md border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="filter-control text-xs"
             value={categoryFilter}
             onChange={(e) =>
               setCategoryFilter(e.target.value as "all" | ProductCategory)
@@ -880,7 +1073,7 @@ const Inventory = () => {
             <option value="Car Perfume">Car Perfume</option>
           </select>
           <select
-            className="h-9 rounded-md border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="filter-control text-xs"
             value={statusFilter}
             onChange={(e) =>
               setStatusFilter(
@@ -897,7 +1090,7 @@ const Inventory = () => {
       </div>
 
       {/* Inventory Table */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="glass-card overflow-hidden">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="data-shell">
         {isLoading && <div className="px-4 py-6 text-center text-sm text-muted-foreground">Loading inventory…</div>}
         {error && <div className="px-4 py-6 text-center text-sm text-rose-400">Failed to load inventory. Check your Supabase connection.</div>}
         {!isLoading && !error && (
@@ -915,7 +1108,7 @@ const Inventory = () => {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                {["Product", "SKU", "Category", "Type", "Stock", "Status", "Actions"].map(
+                {["DE Name", "Brand", "Item", "Inspired By", "Designer", "Price", "Stock", "Status", "Actions"].map(
                   (h) => (
                     <th
                       key={h}
@@ -951,7 +1144,7 @@ const Inventory = () => {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ delay: 0.05 * i }}
-                      className="border-b border-border/20 hover:bg-muted/20 transition-colors"
+                      className="border-b border-border/20 transition-colors"
                     >
                       <td className="px-6 py-4">
                         <input
@@ -964,11 +1157,13 @@ const Inventory = () => {
                       <td className="px-6 py-4">
                         <p className="text-sm font-medium text-foreground">{item.product_name}</p>
                       </td>
-                      <td className="px-6 py-4 text-sm font-mono text-muted-foreground">{item.sku}</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs px-2.5 py-1 rounded-full bg-secondary text-secondary-foreground">{item.product_category}</span>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">{item.brand || "—"}</td>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">{item.item || item.product_type || "—"}</td>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">{item.inspired_by || "—"}</td>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">{item.designer || "—"}</td>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">
+                        {item.price != null ? `R${item.price.toFixed(2)}` : "—"}
                       </td>
-                      <td className="px-6 py-4 text-sm text-muted-foreground">{item.product_type || "—"}</td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <span className={`text-sm font-medium ${isLow ? "text-destructive" : "text-foreground"}`}>{item.stock_on_hand}</span>
@@ -1042,6 +1237,7 @@ const Inventory = () => {
           </table>
         )}
       </motion.div>
+      </div>
     </DashboardLayout>
   );
 };

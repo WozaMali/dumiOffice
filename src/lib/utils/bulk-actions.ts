@@ -1,4 +1,5 @@
 // Bulk action utilities
+import { supabase } from "@/lib/supabase";
 import type { Order, OrderItem, Product } from "@/types/database";
 
 export const generateOrdersCSV = (orders: (Order & { items?: OrderItem[] })[]): string => {
@@ -73,48 +74,77 @@ export const downloadCSV = (csv: string, filename: string) => {
 };
 
 export const generateShippingLabels = (orders: Order[]): string => {
+  const trackingHref = (order: Order) =>
+    order.tracking_url ||
+    (order.tracking_number
+      ? `https://www.google.com/search?q=${encodeURIComponent(
+          `${order.courier || "courier"} tracking ${order.tracking_number}`,
+        )}`
+      : "");
+
   const labelHTML = orders
     .map(
       (order) => `
-    <div style="page-break-after: always; padding: 20px; border: 2px solid #000; margin: 10px; font-family: Arial, sans-serif;">
-      <div style="text-align: center; margin-bottom: 20px;">
-        <h1 style="margin: 0; font-size: 24px;">Dumi Essence</h1>
-        <p style="margin: 5px 0; font-size: 12px;">Premium Fragrances</p>
+    <div style="page-break-after: always; padding: 18px; border: 2px solid #111; margin: 10px; border-radius: 14px; font-family: Inter, Arial, sans-serif;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 14px; border-bottom:1px solid #ddd; padding-bottom:10px;">
+        <div>
+          <h1 style="margin: 0; font-size: 20px; letter-spacing:0.04em;">Dumi Essence</h1>
+          <p style="margin: 4px 0 0 0; font-size: 11px; color:#444;">Premium Fragrances · Shipping Label</p>
+        </div>
+        <div style="text-align:right;">
+          <p style="margin:0; font-size:11px; color:#555;">${order.date}</p>
+          <p style="margin:4px 0 0 0; font-size:11px; color:#555;">Ref: ${order.reference}</p>
+        </div>
       </div>
-      
-      <div style="margin-bottom: 15px;">
-        <strong>Order ID:</strong> ${order.id}<br />
-        <strong>Reference:</strong> ${order.reference}<br />
-        <strong>Date:</strong> ${order.date}
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+        <div style="padding:10px; border:1px solid #ddd; border-radius:10px;">
+          <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">ORDER</p>
+          <p style="margin:0; font-size:13px;"><strong>ID:</strong> ${order.id}</p>
+          <p style="margin:4px 0 0 0; font-size:13px;"><strong>Channel:</strong> ${order.channel}</p>
+          <p style="margin:4px 0 0 0; font-size:13px;"><strong>Service:</strong> ${order.shipping_method || "Standard"}</p>
+        </div>
+        <div style="padding:10px; border:1px solid #ddd; border-radius:10px;">
+          <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">SHIPMENT</p>
+          <p style="margin:0; font-size:13px;"><strong>Courier:</strong> ${order.courier || "Pending assignment"}</p>
+          <p style="margin:4px 0 0 0; font-size:13px;"><strong>Tracking:</strong> ${order.tracking_number || "Pending"}</p>
+          ${
+            trackingHref(order)
+              ? `<p style="margin:4px 0 0 0; font-size:12px;"><strong>Track:</strong> ${trackingHref(order)}</p>`
+              : ""
+          }
+        </div>
       </div>
-      
-      <div style="margin-bottom: 15px; padding: 10px; background: #f0f0f0;">
-        <strong>SHIP TO:</strong><br />
-        ${order.customer_name}<br />
-        ${order.customer_phone || ""}<br />
-        ${order.customer_address || ""}
+
+      <div style="margin-bottom: 12px; padding: 12px; background: #f6f6f6; border-radius:10px; border:1px solid #ddd;">
+        <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">SHIP TO</p>
+        <p style="margin:0; font-size:16px; font-weight:700;">${order.customer_name}</p>
+        <p style="margin:4px 0 0 0; font-size:13px; color:#222;">${order.customer_phone || ""}</p>
+        <p style="margin:4px 0 0 0; font-size:13px; line-height:1.4;">
+          ${(order as any).shipping_address || order.customer_address || ""}
+        </p>
       </div>
-      
-      <div style="margin-bottom: 15px;">
-        <strong>Channel:</strong> ${order.channel}<br />
-        <strong>Shipping Method:</strong> ${order.shipping_method || "Standard"}<br />
-        ${order.courier ? `<strong>Courier:</strong> ${order.courier}<br />` : ""}
-        ${order.tracking_number ? `<strong>Tracking:</strong> ${order.tracking_number}<br />` : ""}
-      </div>
-      
+
       ${
         order.customer_notes
           ? `
-        <div style="margin-top: 15px; padding: 10px; border: 1px dashed #666;">
-          <strong>Customer Notes:</strong><br />
-          ${order.customer_notes}
-        </div>
+      <div style="margin-bottom: 12px; padding: 10px; border:1px dashed #888; border-radius:10px;">
+        <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">DELIVERY NOTE</p>
+        <p style="margin:0; font-size:12px;">${order.customer_notes}</p>
+      </div>
       `
           : ""
       }
-      
-      <div style="margin-top: 20px; text-align: center; font-size: 10px; color: #666;">
-        Packed with care by Dumi Essence
+
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-top:16px;">
+        <div>
+          <p style="margin:0; font-size:10px; color:#666;">Packed with care by Dumi Essence</p>
+          <p style="margin:4px 0 0 0; font-size:10px; color:#666;">Need help? info@dumiessence.co.za · 072 849 5559</p>
+        </div>
+        <div style="text-align:right; font-size:11px;">
+          <p style="margin:0; color:#666;">Amount</p>
+          <p style="margin:2px 0 0 0; font-size:15px; font-weight:700;">R${order.grand_total.toFixed(2)}</p>
+        </div>
       </div>
     </div>
   `,
@@ -127,7 +157,7 @@ export const generateShippingLabels = (orders: Order[]): string => {
       <head>
         <title>Shipping Labels - Dumi Essence</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+          body { font-family: Inter, Arial, sans-serif; margin: 0; padding: 20px; background:#fff; }
           @media print {
             body { margin: 0; padding: 0; }
           }
@@ -149,6 +179,65 @@ export const printLabels = (html: string) => {
     printWindow.print();
     printWindow.close();
   }
+};
+
+export const openShipmentEmailDraft = (order: Order) => {
+  const recipient = order.customer_email?.trim();
+  if (!recipient) return false;
+
+  const trackingHint =
+    order.tracking_url ||
+    (order.tracking_number
+      ? `https://www.google.com/search?q=${encodeURIComponent(
+          `${order.courier || "courier"} tracking ${order.tracking_number}`,
+        )}`
+      : "We will share your tracking link shortly.");
+
+  const subject = `Your Dumi Essence order is on the way (${order.reference})`;
+  const body = [
+    `Hi ${order.customer_name},`,
+    "",
+    "Your order has been prepared and handed over for delivery.",
+    "",
+    `Order reference: ${order.reference}`,
+    `Courier: ${order.courier || "To be confirmed"}`,
+    `Tracking number: ${order.tracking_number || "Pending"}`,
+    `Tracking link: ${trackingHint}`,
+    "",
+    "If you need any support, simply reply to this email and our team will assist.",
+    "",
+    "Warm regards,",
+    "Dumi Essence",
+  ].join("\n");
+
+  const href = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = href;
+  return true;
+};
+
+export const sendShipmentUpdateEmail = async (order: Order) => {
+  // Attempt server-side email first (if edge function exists and is configured).
+  try {
+    const { data, error } = await supabase.functions.invoke("send-shipment-update", {
+      body: {
+        orderId: order.id,
+        customerName: order.customer_name,
+        customerEmail: order.customer_email,
+        reference: order.reference,
+        courier: order.courier,
+        trackingNumber: order.tracking_number,
+        trackingUrl: order.tracking_url,
+      },
+    });
+    if (!error && (data as any)?.ok) {
+      return { ok: true, mode: "server" as const };
+    }
+  } catch {
+    // Ignore and fallback to email draft.
+  }
+
+  const opened = openShipmentEmailDraft(order);
+  return { ok: opened, mode: "draft" as const };
 };
 
 export const copyToClipboard = async (text: string): Promise<boolean> => {

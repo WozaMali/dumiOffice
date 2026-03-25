@@ -1,10 +1,12 @@
 export type OfficeRouteId =
   | "dashboard"
   | "orders"
+  | "dispatch"
+  | "clients"
   | "inventory"
   | "oils"
   | "accounting"
-  | "marketing"
+  | "expenses"
   | "content"
   | "settings";
 
@@ -30,7 +32,7 @@ export interface DumiOfficeConfig {
 export const dumiOfficeConfig: DumiOfficeConfig = {
   appName: "Dumi Essence Office",
   brandName: "Dumi Essence",
-  brandTagline: "Office Management",
+  brandTagline: "Fragrance operations workspace",
   supabaseEnv: {
     url: "VITE_SUPABASE_URL",
     anonKey: "VITE_SUPABASE_ANON_KEY",
@@ -41,7 +43,7 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       label: "Dashboard",
       path: "/",
       description:
-        "High-level overview: total revenue, orders, stock items, customers, recent orders, low stock.",
+        "Cinematic view of house performance, fulfilment rhythm, stock posture, and client activity.",
       primaryTables: ["orders", "products"],
     },
     {
@@ -49,23 +51,39 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       label: "Orders",
       path: "/orders",
       description:
-        "List and manage orders, statuses, payment state and totals.",
+        "Steward client orders from creation through dispatch, delivery, payment, and aftercare.",
       primaryTables: ["orders", "order_items"],
+    },
+    {
+      id: "dispatch",
+      label: "Dispatch Hub",
+      path: "/dispatch",
+      description:
+        "Capture courier details, print premium labels, and send customer tracking updates.",
+      primaryTables: ["orders"],
+    },
+    {
+      id: "clients",
+      label: "Clients",
+      path: "/clients",
+      description:
+        "Keep a calm register of online, walk-in, pop-up, and wholesale clients.",
+      primaryTables: ["customers", "addresses", "orders"],
     },
     {
       id: "inventory",
       label: "Inventory",
       path: "/inventory",
       description:
-        "Manage stock levels and low-stock alerts for fragrances and sizes.",
+        "Manage finished stock, availability, low-stock alerts, and replenishment readiness.",
       primaryTables: ["products", "product_sizes"],
     },
     {
       id: "oils",
-      label: "Fragrance Purchase",
+      label: "DE Orders",
       path: "/oils",
       description:
-        "Define oils, perfume alcohol, container sizes and pricing for order lists.",
+        "Manage DE orders: sourcing procurement, packaging components, ethanol, and pro-forma purchasing.",
       primaryTables: ["oils", "containers", "oil_prices"],
     },
     {
@@ -73,23 +91,23 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       label: "Accounting",
       path: "/accounting",
       description:
-        "Financial overview, revenue, payments and inventory value.",
+        "Track revenue, manual transactions, and the financial health of the house.",
       primaryTables: ["orders", "products", "inventory_movements"],
     },
     {
-      id: "marketing",
-      label: "Marketing",
-      path: "/marketing",
+      id: "expenses",
+      label: "Expenses",
+      path: "/expenses",
       description:
-        "Campaigns, featured products and banners used on the main site.",
-      primaryTables: ["pages", "page_blocks", "media_assets"],
+        "Track and manage business expenses with clear categories for house bookkeeping.",
+      primaryTables: ["accounting_transactions", "accounting_categories"],
     },
     {
       id: "content",
       label: "Content",
       path: "/content",
       description:
-        "CMS view of pages and sections (hero, carousels, storytelling blocks).",
+        "Shape the house narrative through hero moments, editorial assets, and visual storytelling.",
       primaryTables: ["pages", "page_blocks", "media_assets"],
     },
     {
@@ -97,7 +115,7 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       label: "Settings",
       path: "/settings",
       description:
-        "Office preferences: currency, shipping fees, notification emails, roles.",
+        "Manage preferences for identity, notifications, access, and operational defaults.",
       primaryTables: [],
     },
   ],

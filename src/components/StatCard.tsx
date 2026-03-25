@@ -16,14 +16,14 @@ const StatCard = ({ title, value, change, changeType = "neutral", icon: Icon, in
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.1, duration: 0.4 }}
-      className="stat-card"
+      className="metric-card"
     >
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm text-muted-foreground font-body">{title}</p>
-          <p className="text-3xl font-display font-bold mt-2 text-foreground">{value}</p>
+          <p className="metric-label">{title}</p>
+          <p className="metric-value">{value}</p>
           {change && (
-            <p className={`text-xs mt-2 font-medium ${
+            <p className={`metric-note ${
               changeType === "positive" ? "text-success" :
               changeType === "negative" ? "text-destructive" :
               "text-muted-foreground"
@@ -32,8 +32,8 @@ const StatCard = ({ title, value, change, changeType = "neutral", icon: Icon, in
             </p>
           )}
         </div>
-        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-          <Icon size={20} className="text-primary" />
+        <div className="metric-icon">
+          <Icon size={20} />
         </div>
       </div>
     </motion.div>

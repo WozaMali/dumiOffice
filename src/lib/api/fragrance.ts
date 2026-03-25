@@ -3,6 +3,7 @@ import type {
   ScentProduct,
   ScentProforma,
   ScentProformaLine,
+  ScentProformaExtraLine,
   FragranceBottleProduct,
   PerfumePumpProduct,
   PerfumeCapProduct,
@@ -43,8 +44,16 @@ export const fragranceApi = {
   // Pro-formas
   async createProforma(
     header: Partial<ScentProforma>,
-    lines: Omit<ScentProformaLine, "id" | "created_at">[],
-  ): Promise<{ header: ScentProforma; lines: ScentProformaLine[] }> {
+    lines: Omit<ScentProformaLine, "id" | "created_at" | "proforma_id">[],
+    extras: Omit<
+      ScentProformaExtraLine,
+      "id" | "created_at" | "proforma_id"
+    >[] = [],
+  ): Promise<{
+    header: ScentProforma;
+    lines: ScentProformaLine[];
+    extras: ScentProformaExtraLine[];
+  }> {
     const { data: insertedHeader, error: headerError } = await supabase
       .from("scent_proformas")
       .insert(header)
@@ -52,24 +61,42 @@ export const fragranceApi = {
       .single();
     if (headerError) throw headerError;
 
-    if (!lines.length) {
-      return { header: insertedHeader as ScentProforma, lines: [] };
+    let insertedLines: ScentProformaLine[] = [];
+    if (lines.length) {
+      const payload = lines.map((l) => ({
+        ...l,
+        proforma_id: insertedHeader.id,
+      }));
+
+      const { data, error } = await supabase
+        .from("scent_proforma_lines")
+        .insert(payload)
+        .select();
+
+      if (error) throw error;
+      insertedLines = (data ?? []) as ScentProformaLine[];
     }
 
-    const payload = lines.map((l) => ({
-      ...l,
-      proforma_id: insertedHeader.id,
-    }));
+    let insertedExtras: ScentProformaExtraLine[] = [];
+    if (extras.length) {
+      const extrasPayload = extras.map((e) => ({
+        ...e,
+        proforma_id: insertedHeader.id,
+      }));
 
-    const { data: insertedLines, error: linesError } = await supabase
-      .from("scent_proforma_lines")
-      .insert(payload)
-      .select();
+      const { data, error } = await supabase
+        .from("scent_proforma_extra_lines")
+        .insert(extrasPayload)
+        .select();
 
-    if (linesError) throw linesError;
+      if (error) throw error;
+      insertedExtras = (data ?? []) as ScentProformaExtraLine[];
+    }
+
     return {
       header: insertedHeader as ScentProforma,
-      lines: (insertedLines ?? []) as ScentProformaLine[],
+      lines: insertedLines,
+      extras: insertedExtras,
     };
   },
 
@@ -90,14 +117,39 @@ export const fragranceApi = {
     if (error) throw error;
   },
 
+  async updateProforma(
+    id: string,
+    patch: Partial<ScentProforma>,
+  ): Promise<ScentProforma> {
+    const { data, error } = await supabase
+      .from("scent_proformas")
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ScentProforma;
+  },
+
+
   async listProformaLines(proformaId: string): Promise<any[]> {
     const { data, error } = await supabase
       .from("scent_proforma_lines")
-      .select("*, scent_products ( brand, item )")
+      .select("*, scent_products ( brand, item, inspired_by, designer )")
       .eq("proforma_id", proformaId)
       .order("created_at");
     if (error) throw error;
     return data ?? [];
+  },
+
+  async listProformaExtras(proformaId: string): Promise<ScentProformaExtraLine[]> {
+    const { data, error } = await supabase
+      .from("scent_proforma_extra_lines")
+      .select("*")
+      .eq("proforma_id", proformaId)
+      .order("created_at");
+    if (error) throw error;
+    return (data ?? []) as ScentProformaExtraLine[];
   },
 
   // Packaging master data

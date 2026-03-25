@@ -70,6 +70,44 @@ export const ordersApi = {
   },
 
   async delete(id: string): Promise<void> {
+    // Cascade manually to avoid FK/RLS surprises.
+    // 1) Delete accounting transactions linked to this order (and their attachments)
+    const { data: txData, error: txIdsError } = await supabase
+      .from("accounting_transactions")
+      .select("id")
+      .eq("order_id", id);
+
+    if (txIdsError) throw txIdsError;
+
+    const txIds = (txData ?? []).map((t) => (t as any).id as string);
+    if (txIds.length) {
+      const { error: attErr } = await supabase
+        .from("accounting_attachments")
+        .delete()
+        .in("transaction_id", txIds);
+      if (attErr) throw attErr;
+    }
+
+    const { error: txDelErr } = await supabase
+      .from("accounting_transactions")
+      .delete()
+      .eq("order_id", id);
+    if (txDelErr) throw txDelErr;
+
+    // 2) Delete items + status history for this order
+    const { error: itemsErr } = await supabase
+      .from("order_items")
+      .delete()
+      .eq("order_id", id);
+    if (itemsErr) throw itemsErr;
+
+    const { error: historyErr } = await supabase
+      .from("order_status_history")
+      .delete()
+      .eq("order_id", id);
+    if (historyErr) throw historyErr;
+
+    // 3) Finally delete the order row
     const { error } = await supabase.from("orders").delete().eq("id", id);
     if (error) throw error;
   },

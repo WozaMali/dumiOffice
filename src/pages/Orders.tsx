@@ -1,5 +1,6 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
+import PageHero from "@/components/PageHero";
 import { motion } from "framer-motion";
 import { Search, Filter, Plus, Trash2, CheckCircle2, Package, Truck, MapPin, Clock, AlertCircle, Edit, Copy, Calendar, Download, Printer } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,19 +10,37 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ordersApi, orderItemsApi, orderHistoryApi } from "@/lib/api/orders";
 import { productsApi } from "@/lib/api/products";
-import { customersApi } from "@/lib/api/customers";
-import type { Order, OrderItem, Product, OrderChannel, OrderStage, OrderStatus, PaymentStatus, ProductCategory } from "@/types/database";
+import { inventoryApi } from "@/lib/api/inventory";
+import { accountingApi } from "@/lib/api/accounting";
+import { customersApi, addressesApi } from "@/lib/api/customers";
+import type {
+  Order,
+  OrderItem,
+  Product,
+  OrderChannel,
+  OrderStage,
+  OrderStatus,
+  PaymentStatus,
+  ProductCategory,
+  AccountingTransactionType,
+  CustomerChannel,
+  Address,
+  Customer,
+} from "@/types/database";
 import { toast } from "sonner";
 import { validateEmail, validatePhone, validateStockAvailability, formatPhone } from "@/lib/utils/validation";
 import { generateOrdersCSV, downloadCSV, generateShippingLabels, printLabels, copyToClipboard } from "@/lib/utils/bulk-actions";
 import { generateOrderReceipt } from "@/lib/utils/receipt";
+import { useSearchParams } from "react-router-dom";
+import { loyaltyPointsApi } from "@/lib/api/loyaltyPoints";
+import { supabase } from "@/lib/supabase";
 
 const statusPill: Record<OrderStatus, string> = {
-  Processing: "bg-amber-500/15 text-amber-300",
-  Shipped: "bg-sky-500/15 text-sky-300",
-  Delivered: "bg-emerald-500/15 text-emerald-300",
-  Cancelled: "bg-rose-500/15 text-rose-300",
-  Returned: "bg-purple-500/15 text-purple-300",
+  Processing: "status-pill-gold",
+  Shipped: "status-pill-muted",
+  Delivered: "status-pill-success",
+  Cancelled: "status-pill-muted text-rose-300",
+  Returned: "status-pill-muted text-purple-300",
 };
 
 const channelRefPrefix: Record<OrderChannel, string> = {
@@ -46,6 +65,7 @@ type LineItem = {
 
 const Orders = () => {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const { data: orders = [], isLoading, error } = useQuery<Order[]>({
     queryKey: ["orders"],
     queryFn: ordersApi.list,
@@ -67,13 +87,20 @@ const Orders = () => {
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [courierFilter, setCourierFilter] = useState<string>("all");
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
+  /** Set when opening New order from Clients (URL); also cleared when resolving by email. */
+  const [prefilledCustomerId, setPrefilledCustomerId] = useState<string | null>(null);
 
   const [createForm, setCreateForm] = useState({
     channel: "Online Orders" as OrderChannel,
     customerName: "",
     customerEmail: "",
     customerPhone: "",
-    customerAddress: "",
+    streetAddress: "",
+    complex: "",
+    suburb: "",
+    city: "",
+    province: "",
+    postalCode: "",
     location: "",
     shippingFee: "0",
     discount: "0",
@@ -104,6 +131,142 @@ const Orders = () => {
     enabled: !!selectedOrder,
   });
 
+  // Prefill create order when arriving from Clients (URL + CRM; delivery* params are a fallback if RLS blocks reads in Orders)
+  useEffect(() => {
+    const name = searchParams.get("customerName");
+    const email = searchParams.get("customerEmail");
+    const phone = searchParams.get("customerPhone");
+    const clientChannel = searchParams.get("clientChannel") as CustomerChannel | null;
+    const customerId = searchParams.get("customerId");
+    const deliveryLine1 = searchParams.get("deliveryLine1");
+    const deliverySuburb = searchParams.get("deliverySuburb");
+    const deliveryCity = searchParams.get("deliveryCity");
+    const deliveryProvince = searchParams.get("deliveryProvince");
+    const deliveryPostal = searchParams.get("deliveryPostal");
+
+    if (!name && !phone && !email && !customerId && !deliveryLine1 && !deliveryCity) {
+      setPrefilledCustomerId(null);
+      return;
+    }
+
+    const prefillFromClient = async () => {
+      let mappedChannel: OrderChannel = "Online Orders";
+      if (clientChannel === "Wholesale") mappedChannel = "Wholesale";
+      else if (clientChannel === "Walk-In" || clientChannel === "Pop Up") mappedChannel = "Boutique & Pop-up";
+
+      setChannel(mappedChannel);
+      setCreateForm((prev) => ({
+        ...prev,
+        channel: mappedChannel,
+        customerName: name || prev.customerName,
+        customerEmail: email || prev.customerEmail,
+        customerPhone: phone || prev.customerPhone,
+        streetAddress: deliveryLine1 || prev.streetAddress,
+        suburb: deliverySuburb || prev.suburb,
+        city: deliveryCity || prev.city,
+        province: deliveryProvince || prev.province,
+        postalCode: deliveryPostal || prev.postalCode,
+      }));
+
+      if (customerId) {
+        setPrefilledCustomerId(customerId);
+
+        let cust: Customer | null = null;
+        try {
+          cust = await customersApi.getById(customerId);
+        } catch {
+          cust = null;
+        }
+
+        let addresses: Address[] = [];
+        try {
+          addresses = await addressesApi.listByCustomerId(customerId);
+        } catch {
+          addresses = [];
+        }
+
+        const addr = addresses.find((a) => a.is_default) ?? addresses[0];
+
+        setCreateForm((prev) => ({
+          ...prev,
+          channel: mappedChannel,
+          customerName: (cust?.customer_name && cust.customer_name.trim()) || prev.customerName,
+          customerEmail: (cust?.customer_email && cust.customer_email.trim()) || prev.customerEmail,
+          customerPhone: (cust?.customer_phone && cust.customer_phone.trim()) || prev.customerPhone,
+          streetAddress:
+            (addr?.address_line && addr.address_line.trim()) || deliveryLine1 || prev.streetAddress,
+          suburb: (addr?.suburb && addr.suburb.trim()) || deliverySuburb || prev.suburb,
+          city: (addr?.city && addr.city.trim()) || deliveryCity || prev.city,
+          province: (addr?.province && addr.province.trim()) || deliveryProvince || prev.province,
+          postalCode: (addr?.postal_code && addr.postal_code.trim()) || deliveryPostal || prev.postalCode,
+        }));
+
+        try {
+          const { data: snap, error: snapErr } = await supabase.rpc("office_prefill_from_store", {
+            p_customer_id: customerId,
+          });
+          if (!snapErr && snap != null && typeof snap === "object") {
+            const s = snap as {
+              ok?: boolean;
+              source?: string;
+              full_name?: string | null;
+              phone?: string | null;
+              line1?: string | null;
+              suburb?: string | null;
+              city?: string | null;
+              province?: string | null;
+              postal_code?: string | null;
+            };
+            if (s.ok === true && s.source === "store") {
+              setCreateForm((prev) => ({
+                ...prev,
+                customerName: (s.full_name && String(s.full_name).trim()) || prev.customerName,
+                customerPhone: (s.phone && String(s.phone).trim()) || prev.customerPhone,
+                streetAddress: (s.line1 && String(s.line1).trim()) || prev.streetAddress,
+                suburb: (s.suburb && String(s.suburb).trim()) || prev.suburb,
+                city: (s.city && String(s.city).trim()) || prev.city,
+                province: (s.province && String(s.province).trim()) || prev.province,
+                postalCode: (s.postal_code && String(s.postal_code).trim()) || prev.postalCode,
+              }));
+            }
+          }
+        } catch {
+          /* RPC not deployed — run docs/SUPABASE_OFFICE_PREFILL_FROM_STORE_RPC.sql */
+        }
+      } else {
+        setPrefilledCustomerId(null);
+      }
+
+      setCreateOpen(true);
+    };
+
+    prefillFromClient();
+  }, [searchParams]);
+
+  const tryAwardLoyaltyForOrder = useCallback(
+    async (order: Order) => {
+      if (order.status !== "Delivered" || order.payment_status !== "Paid" || !order.customer_id) {
+        return;
+      }
+      const points = loyaltyPointsApi.pointsForSpendZar(order.grand_total);
+      if (points <= 0) return;
+      try {
+        await loyaltyPointsApi.applyPoints({
+          customerId: order.customer_id,
+          pointsDelta: points,
+          reason: "order_earn",
+          orderId: order.id,
+          reference: `earn:order:${order.id}`,
+          createdBy: "Orders",
+        });
+        await queryClient.invalidateQueries({ queryKey: ["customers"] });
+      } catch (err) {
+        console.error("Loyalty award failed", err);
+      }
+    },
+    [queryClient],
+  );
+
   const createOrderMutation = useMutation({
     mutationFn: async (order: Partial<Order>) => {
       const created = await ordersApi.create(order);
@@ -123,20 +286,75 @@ const Orders = () => {
             line_total: item.line_total,
           })),
         );
+
+        // Automatically decrease inventory for each ordered item
+        await Promise.all(
+          lineItems
+            .filter((item) => item.product_id)
+            .map((item) =>
+              inventoryApi.adjustStock({
+                productId: item.product_id!,
+                delta: -item.quantity,
+                source: "order",
+                reason: `Order ${created.id}`,
+                reference: created.reference,
+                createdBy: "Admin",
+              }),
+            ),
+        );
       }
       return created;
     },
     onSuccess: async (created) => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      // If accounting is open, keep it in sync as well
+      queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
       toast.success("Order created successfully");
+
+      // Automatically create an income accounting transaction for paid orders
+      if (created.payment_status === "Paid") {
+        try {
+          await accountingApi.createTransaction({
+            date: created.date,
+            type: "income" as AccountingTransactionType,
+            amount: created.grand_total,
+            currency: created.currency,
+            order_id: created.id,
+            reference: created.reference,
+          });
+          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+        } catch (err) {
+          console.error("Failed to create accounting transaction", err);
+        }
+      }
 
       // Automatically generate receipt PDF for paid online orders
       if (created.channel === "Online Orders" && created.payment_status === "Paid" && lineItems.length > 0) {
         try {
-          await generateOrderReceipt(created as Order, lineItems);
+          const itemsForReceipt = lineItems.map((item, index) => {
+            const product = products.find((p) => p.id === item.product_id);
+            return {
+              index: index + 1,
+              fragrance_name: product?.product_name || item.product_name,
+              inspired_by: product?.inspired_by,
+              code: product?.code || item.sku,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              discount: item.discount,
+              line_total: item.line_total,
+            };
+          });
+          await generateOrderReceipt(created as Order, itemsForReceipt);
         } catch (err) {
           console.error("Failed to generate receipt PDF", err);
         }
+      }
+
+      try {
+        await tryAwardLoyaltyForOrder(created as Order);
+      } catch {
+        /* logged in tryAwardLoyaltyForOrder */
       }
 
       setCreateOpen(false);
@@ -168,6 +386,22 @@ const Orders = () => {
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to update order");
+    },
+  });
+
+  const deleteOrderMutation = useMutation({
+    mutationFn: async (id: string) => ordersApi.delete(id),
+    onSuccess: () => {
+      toast.success("Order deleted.");
+      setSelectedOrder(null);
+      setSelectedItems([]);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["orderItems"] });
+      queryClient.invalidateQueries({ queryKey: ["orderHistory"] });
+      queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to delete order.");
     },
   });
 
@@ -238,6 +472,11 @@ const Orders = () => {
     );
   }, [products]);
 
+  const selectedProductForCurrentLine = useMemo(() => {
+    const list = productsByCategory[currentLine.productCategory] || [];
+    return list.find((p) => p.id === currentLine.productId);
+  }, [productsByCategory, currentLine.productCategory, currentLine.productId]);
+
   const handleCreateChange = (field: keyof typeof createForm, value: string) => {
     setCreateForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -304,7 +543,12 @@ const Orders = () => {
       customerName: "",
       customerEmail: "",
       customerPhone: "",
-      customerAddress: "",
+      streetAddress: "",
+      complex: "",
+      suburb: "",
+      city: "",
+      province: "",
+      postalCode: "",
       location: "",
       shippingFee: "0",
       discount: "0",
@@ -315,12 +559,25 @@ const Orders = () => {
       internalNotes: "",
     });
     setLineItems([]);
+    setPrefilledCustomerId(null);
     setCurrentLine({
       productCategory: "Perfume",
       productId: "",
       quantity: "1",
       discount: "0",
     });
+  };
+
+  const buildShippingAddress = () => {
+    const parts = [
+      createForm.streetAddress.trim(),
+      createForm.complex.trim(),
+      createForm.suburb.trim(),
+      createForm.city.trim(),
+      createForm.province.trim(),
+      createForm.postalCode.trim(),
+    ].filter(Boolean);
+    return parts.join(", ");
   };
 
   const handleCreateSubmit = async (event: React.FormEvent) => {
@@ -342,15 +599,33 @@ const Orders = () => {
       return;
     }
 
-    const newIdNumber = 1050 + orders.length;
     const today = new Date();
     const dateStamp = today.toISOString().slice(0, 10).replace(/-/g, "");
-    const reference = `${channelRefPrefix[createForm.channel]}-${dateStamp}-${newIdNumber}`;
+
+    // Use UUID for primary key to be compatible with both TEXT and UUID schemas
+    const orderId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `de-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+
+    // Human-friendly reference that still includes the channel and date
+    const referenceSuffix = dateStamp.slice(-6) + String(Math.floor(Math.random() * 1_000)).padStart(3, "0");
+    const reference = `${channelRefPrefix[createForm.channel]}-${dateStamp}-${referenceSuffix}`;
 
     const totals = calculateTotals();
 
+    let resolvedCustomerId = prefilledCustomerId;
+    if (!resolvedCustomerId && createForm.customerEmail.trim()) {
+      try {
+        const match = await customersApi.getByEmail(createForm.customerEmail.trim());
+        if (match) resolvedCustomerId = match.id;
+      } catch {
+        /* ignore */
+      }
+    }
+
     const newOrder: Partial<Order> = {
-      id: `DE-${newIdNumber}`,
+      id: orderId,
       reference,
       channel: createForm.channel,
       status: "Processing",
@@ -370,18 +645,31 @@ const Orders = () => {
       customer_name: createForm.customerName.trim(),
       customer_email: createForm.customerEmail.trim(),
       customer_phone: formatPhone(createForm.customerPhone.trim()),
-      customer_address: createForm.customerAddress.trim() || "To be confirmed",
+      // For compatibility with the unified schema, store the delivery address as shipping_address
+      shipping_address: buildShippingAddress() || "To be confirmed",
       internal_notes: createForm.internalNotes.trim(),
       customer_notes: createForm.customerNotes.trim(),
       date: today.toISOString().slice(0, 10),
     };
 
+    if (resolvedCustomerId) {
+      newOrder.customer_id = resolvedCustomerId;
+    }
+
     createOrderMutation.mutate(newOrder);
   };
 
-  const handleStatusChange = (orderId: string, status: OrderStatus, stage: OrderStage) => {
-    updateStatusMutation.mutate({ id: orderId, status, stage });
-    setSelectedOrder(null);
+  const handleStatusChange = async (orderId: string, status: OrderStatus, stage: OrderStage) => {
+    const order = selectedOrder?.id === orderId ? selectedOrder : orders.find((o) => o.id === orderId);
+    try {
+      await updateStatusMutation.mutateAsync({ id: orderId, status, stage });
+      const next = order ? { ...order, status, stage } : null;
+      if (next) {
+        await tryAwardLoyaltyForOrder(next);
+      }
+    } finally {
+      setSelectedOrder(null);
+    }
   };
 
   const handleBulkAction = async (action: string) => {
@@ -479,7 +767,7 @@ const Orders = () => {
 Reference: ${order.reference}
 Customer: ${order.customer_name}
 Phone: ${order.customer_phone}
-Address: ${order.customer_address}
+Address: ${(order as any).shipping_address || order.customer_address || ""}
 Total: R${order.grand_total.toFixed(2)}
 Status: ${order.status} (${order.stage})`;
     
@@ -500,7 +788,22 @@ Status: ${order.status} (${order.stage})`;
       return;
     }
     try {
-      await generateOrderReceipt(selectedOrder, orderItems as any);
+      const itemsForReceipt = orderItems.map((item, index) => {
+        const product = products.find(
+          (p) => p.id === item.product_id || p.sku === item.sku,
+        );
+        return {
+          index: index + 1,
+          fragrance_name: product?.product_name || item.product_name,
+          inspired_by: product?.inspired_by,
+          code: product?.code || item.sku,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          discount: item.discount,
+          line_total: item.line_total,
+        };
+      });
+      await generateOrderReceipt(selectedOrder, itemsForReceipt);
     } catch (err) {
       console.error("Failed to generate receipt PDF", err);
       toast.error("Failed to generate receipt PDF");
@@ -527,39 +830,57 @@ Status: ${order.status} (${order.stage})`;
 
   return (
     <DashboardLayout>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <motion.h1 initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="text-2xl font-semibold text-foreground">
-            Orders & Fulfilment
-          </motion.h1>
-          <p className="text-sm text-muted-foreground mt-1">Plan, execute and track all Dumi Essence customer orders.</p>
-        </div>
-        <Button className="px-4 py-2" onClick={() => setCreateOpen(true)}>
-          + Create Order
-        </Button>
-      </div>
+      <div className="ops-workspace">
+      <PageHero
+        eyebrow="Client Orders"
+        title="Fulfilment with a premium house standard."
+        description="Guide each order from creation to delivery with better visibility, cleaner controls, and a calmer operational rhythm."
+        actions={
+          <>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Create order
+            </Button>
+            <Button variant="outline" onClick={() => setChannel("Online Orders")}>
+              Focus online flow
+            </Button>
+          </>
+        }
+        aside={
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">In motion</p>
+              <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totals.inProgress}</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">Delivered</p>
+              <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totals.completed}</p>
+            </div>
+          </div>
+        }
+      />
 
       {/* Top counters */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5 text-xs">
-        <div className="glass-card px-4 py-3 flex flex-col gap-1">
-          <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Total Orders</span>
-          <span className="text-lg font-semibold text-foreground">{totals.total}</span>
-          <span className="text-[11px] text-muted-foreground">this year</span>
+      <div className="mb-5 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+        <div className="metric-card">
+          <span className="metric-label">Total orders</span>
+          <span className="metric-value text-[2.15rem]">{totals.total}</span>
+          <span className="metric-note">This year</span>
         </div>
-        <div className="glass-card px-4 py-3 flex flex-col gap-1">
-          <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Scheduled</span>
-          <span className="text-lg font-semibold text-foreground">{totals.scheduled}</span>
-          <span className="text-[11px] text-muted-foreground">upcoming</span>
+        <div className="metric-card">
+          <span className="metric-label">Scheduled</span>
+          <span className="metric-value text-[2.15rem]">{totals.scheduled}</span>
+          <span className="metric-note">Upcoming dispatches</span>
         </div>
-        <div className="glass-card px-4 py-3 flex flex-col gap-1">
-          <span className="text-muted-foreground uppercase tracking-wide text-[11px]">In Progress</span>
-          <span className="text-lg font-semibold text-foreground">{totals.inProgress}</span>
-          <span className="text-[11px] text-muted-foreground">active</span>
+        <div className="metric-card">
+          <span className="metric-label">In progress</span>
+          <span className="metric-value text-[2.15rem]">{totals.inProgress}</span>
+          <span className="metric-note">Active fulfilment</span>
         </div>
-        <div className="glass-card px-4 py-3 flex flex-col gap-1">
-          <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Completed</span>
-          <span className="text-lg font-semibold text-foreground">{totals.completed}</span>
-          <span className="text-[11px] text-muted-foreground">delivered</span>
+        <div className="metric-card">
+          <span className="metric-label">Completed</span>
+          <span className="metric-value text-[2.15rem]">{totals.completed}</span>
+          <span className="metric-note">Delivered with care</span>
         </div>
       </div>
 
@@ -568,12 +889,12 @@ Status: ${order.status} (${order.stage})`;
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="glass-card px-4 py-3 mb-3 flex items-center justify-between"
+          className="toolbar-panel mb-3"
         >
-          <span className="text-xs text-foreground">{selectedItems.length} orders selected</span>
+          <span className="text-xs uppercase tracking-[0.2em] text-primary">{selectedItems.length} orders selected</span>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => handleBulkAction("Mark as In Progress")}>
-              Mark as In Progress
+              Mark in progress
             </Button>
             <Button size="sm" variant="outline" onClick={() => handleBulkAction("Export CSV")}>
               Export CSV
@@ -589,47 +910,47 @@ Status: ${order.status} (${order.stage})`;
       )}
 
       {/* Channel tabs */}
-      <div className="glass-card px-2 py-2 mb-3 flex items-center justify-between text-xs">
-        <div className="flex gap-1">
+      <div className="toolbar-panel mb-3">
+        <div className="segmented-tabs">
           {(["Online Orders", "Boutique & Pop-up", "Wholesale", "Returns"] as OrderChannel[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setChannel(tab)}
-              className={`px-3 py-1.5 rounded-md ${
-                channel === tab ? "bg-foreground text-background font-medium" : "text-muted-foreground hover:text-foreground"
+              className={`segmented-tab ${
+                channel === tab ? "segmented-tab-active" : ""
               }`}
             >
               {tab}
             </button>
           ))}
         </div>
-        <span className="text-[11px] text-muted-foreground">{filteredOrders.length} total</span>
+        <span className="luxury-note">{filteredOrders.length} total</span>
       </div>
 
-      <p className="text-[11px] text-muted-foreground mb-2 font-medium">{channel}</p>
+      <p className="luxury-note mb-2">{channel}</p>
 
       {/* Status tabs */}
-      <div className="flex items-center justify-between mb-3 text-xs">
-        <div className="flex gap-2">
+      <div className="toolbar-panel mb-3 text-sm">
+        <div className="segmented-tabs">
           {["All", "Scheduled", "In Progress", "Completed"].map((label) => (
             <button
               key={label}
               onClick={() => setStage(label as "All" | OrderStage)}
-              className={`px-3 py-1.5 rounded-full border text-[11px] ${
-                stage === label ? "bg-foreground text-background border-transparent" : "border-border text-muted-foreground hover:text-foreground"
+              className={`segmented-tab ${
+                stage === label ? "segmented-tab-active" : ""
               }`}
             >
               {label === "All" ? "All Orders" : label}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#020617] border border-border">
-            <Search size={14} className="text-muted-foreground" />
-            <input
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search size={14} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-primary" />
+            <Input
               type="text"
               placeholder="Search orders..."
-              className="bg-transparent border-none outline-none text-[11px] text-foreground placeholder:text-muted-foreground w-40"
+              className="w-48 pl-10 text-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -637,7 +958,7 @@ Status: ${order.status} (${order.stage})`;
           
           {/* Date filter */}
           <select
-            className="flex items-center gap-1 px-3 py-1.5 rounded-md border border-border text-[11px] bg-background text-foreground"
+            className="filter-control text-xs"
             value={dateFilter}
             onChange={(e) => setDateFilter(e.target.value as any)}
           >
@@ -649,7 +970,7 @@ Status: ${order.status} (${order.stage})`;
 
           {/* Payment filter */}
           <select
-            className="flex items-center gap-1 px-3 py-1.5 rounded-md border border-border text-[11px] bg-background text-foreground"
+            className="filter-control text-xs"
             value={paymentFilter}
             onChange={(e) => setPaymentFilter(e.target.value)}
           >
@@ -663,7 +984,7 @@ Status: ${order.status} (${order.stage})`;
       </div>
 
       {/* Orders table */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card overflow-hidden">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="data-shell">
         {isLoading && (
           <div className="px-4 py-6 text-center text-[11px] text-muted-foreground">Loading orders…</div>
         )}
@@ -673,9 +994,9 @@ Status: ${order.status} (${order.stage})`;
           </div>
         )}
         {!isLoading && !error && (
-          <table className="w-full text-xs">
+          <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border/60 bg-[#020617]">
+              <tr className="border-b border-border/60">
                 <th className="px-4 py-3">
                   <input
                     type="checkbox"
@@ -685,7 +1006,7 @@ Status: ${order.status} (${order.stage})`;
                   />
                 </th>
                 {["Order ID", "Items", "Status", "Payment", "Location", "Date", "Total", "Customer", "Phone", "Ref", "Actions"].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-[11px] font-medium text-muted-foreground">
+                  <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">
                     {h}
                   </th>
                 ))}
@@ -711,7 +1032,7 @@ Status: ${order.status} (${order.stage})`;
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.05 * i }}
-                    className="border-b border-border/40 hover:bg-[#020617] transition-colors"
+                    className="border-b border-border/40 transition-colors"
                   >
                     <td className="px-4 py-3">
                       <input
@@ -810,6 +1131,18 @@ Status: ${order.status} (${order.stage})`;
               <Button size="sm" variant="outline" onClick={() => handleEditOrder(selectedOrder)}>
                 <Edit size={14} /> Edit Order
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                disabled={deleteOrderMutation.isPending}
+                onClick={() => {
+                  if (!confirm(`Delete order ${selectedOrder.id}? This cannot be undone.`)) return;
+                  deleteOrderMutation.mutate(selectedOrder.id);
+                }}
+              >
+                <Trash2 size={14} /> Delete Order
+              </Button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
@@ -824,7 +1157,9 @@ Status: ${order.status} (${order.stage})`;
               {/* Delivery address */}
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Delivery address</p>
-                <p className="text-sm text-foreground leading-relaxed">{selectedOrder.customer_address}</p>
+                <p className="text-sm text-foreground leading-relaxed">
+                  {(selectedOrder as any).shipping_address || selectedOrder.customer_address || ""}
+                </p>
               </div>
             </div>
 
@@ -1034,14 +1369,79 @@ Status: ${order.status} (${order.stage})`;
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="address">Delivery address *</Label>
-              <Input
-                id="address"
-                placeholder="Street, suburb, city, postal code"
-                value={createForm.customerAddress}
-                onChange={(e) => handleCreateChange("customerAddress", e.target.value)}
-                required
-              />
+              <Label>Delivery address *</Label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="streetAddress" className="text-xs">
+                    Street address
+                  </Label>
+                  <Input
+                    id="streetAddress"
+                    value={createForm.streetAddress}
+                    onChange={(e) => handleCreateChange("streetAddress", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="complex" className="text-xs">
+                    Complex / Building / Estate (optional)
+                  </Label>
+                  <Input
+                    id="complex"
+                    value={createForm.complex}
+                    onChange={(e) => handleCreateChange("complex", e.target.value)}
+                    placeholder=""
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="suburb" className="text-xs">
+                    Suburb
+                  </Label>
+                  <Input
+                    id="suburb"
+                    value={createForm.suburb}
+                    onChange={(e) => handleCreateChange("suburb", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="city" className="text-xs">
+                    City
+                  </Label>
+                  <Input
+                    id="city"
+                    value={createForm.city}
+                    onChange={(e) => handleCreateChange("city", e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="province" className="text-xs">
+                    Province
+                  </Label>
+                  <Input
+                    id="province"
+                    value={createForm.province}
+                    onChange={(e) => handleCreateChange("province", e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="postalCode" className="text-xs">
+                    Postal code
+                  </Label>
+                  <Input
+                    id="postalCode"
+                    value={createForm.postalCode}
+                    onChange={(e) => handleCreateChange("postalCode", e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Line items */}
@@ -1053,7 +1453,7 @@ Status: ${order.status} (${order.stage})`;
 
               {/* Add line item form */}
               <div className="glass-card p-4 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                   <div className="space-y-2">
                     <Label htmlFor="productCategory" className="text-xs">
                       Product category
@@ -1085,7 +1485,7 @@ Status: ${order.status} (${order.stage})`;
                       <option value="">Select product…</option>
                       {(productsByCategory[currentLine.productCategory] || []).map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.product_name} (Stock: {p.stock_on_hand})
+                          {p.product_name} (Stock: {p.stock_on_hand}, R{p.price.toFixed(2)})
                         </option>
                       ))}
                     </select>
@@ -1101,6 +1501,18 @@ Status: ${order.status} (${order.stage})`;
                       Discount (R)
                     </Label>
                     <Input id="lineDiscount" type="number" min={0} value={currentLine.discount} onChange={(e) => handleLineChange("discount", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="unitPrice" className="text-xs">
+                      Price (R)
+                    </Label>
+                    <Input
+                      id="unitPrice"
+                      type="text"
+                      readOnly
+                      value={selectedProductForCurrentLine ? `R${selectedProductForCurrentLine.price.toFixed(2)}` : ""}
+                      className="bg-muted/30 cursor-default"
+                    />
                   </div>
                 </div>
                 <Button type="button" size="sm" variant="outline" onClick={addLineItem} disabled={!currentLine.productId}>
@@ -1293,7 +1705,8 @@ Status: ${order.status} (${order.stage})`;
                   customer_name: formData.get("customerName") as string,
                   customer_email: formData.get("customerEmail") as string,
                   customer_phone: formatPhone(formData.get("customerPhone") as string),
-                  customer_address: formData.get("customerAddress") as string,
+                  // Store updated delivery address as shipping_address (unified schema)
+                  shipping_address: formData.get("customerAddress") as string,
                   courier: formData.get("courier") as string,
                   tracking_number: formData.get("trackingNumber") as string,
                   shipping_method: formData.get("shippingMethod") as string,
@@ -1349,7 +1762,12 @@ Status: ${order.status} (${order.stage})`;
 
               <div className="space-y-2">
                 <Label htmlFor="edit_customerAddress">Delivery address *</Label>
-                <Input id="edit_customerAddress" name="customerAddress" defaultValue={editingOrder.customer_address || ""} required />
+                <Input
+                  id="edit_customerAddress"
+                  name="customerAddress"
+                  defaultValue={(editingOrder as any).shipping_address || editingOrder.customer_address || ""}
+                  required
+                />
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-border pt-4">
@@ -1394,6 +1812,7 @@ Status: ${order.status} (${order.stage})`;
           </DialogContent>
         )}
       </Dialog>
+      </div>
     </DashboardLayout>
   );
 };

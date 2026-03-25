@@ -1,4 +1,5 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import PageHero from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,8 @@ import {
   AlertCircle,
   Calendar,
   TrendingUp,
+  Package,
+  Trash2,
   Settings2,
   Mail,
   CreditCard,
@@ -73,6 +76,9 @@ const Accounting = () => {
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryKind, setNewCategoryKind] = useState<AccountingCategoryKind>("income");
+
+  const [clearLedgerOpen, setClearLedgerOpen] = useState(false);
+  const [clearLedgerScope, setClearLedgerScope] = useState<"range" | "all">("range");
 
   const { data: orders = [], refetch: refetchOrders } = useQuery<Order[]>({
     queryKey: ["orders", "accounting"],
@@ -139,6 +145,31 @@ const Accounting = () => {
     onError: (err: any) => toast.error(err?.message || "Failed to create category"),
   });
 
+  const clearLedgerMutation = useMutation({
+    mutationFn: async () => {
+      if (clearLedgerScope === "all") {
+        return accountingApi.deleteAllTransactions();
+      }
+      return accountingApi.deleteTransactionsInRange({
+        dateFrom,
+        dateTo,
+      });
+    },
+    onSuccess: (deletedCount) => {
+      toast.success(
+        `Ledger cleared. Deleted ${deletedCount} transaction${
+          deletedCount === 1 ? "" : "s"
+        }.`,
+      );
+      setClearLedgerOpen(false);
+      setLedgerPage(0);
+      refetchAll();
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to clear ledger.");
+    },
+  });
+
   const ordersInRange = useMemo(() => {
     return orders.filter((o) => o.date >= dateFrom && o.date <= dateTo);
   }, [orders, dateFrom, dateTo]);
@@ -148,19 +179,30 @@ const Accounting = () => {
   }, [transactions, dateFrom, dateTo]);
 
   const metrics = useMemo(() => {
-    const totalRevenue = ordersInRange.reduce((sum, o) => sum + o.grand_total, 0);
-    const paidRevenue = ordersInRange
-      .filter((o) => o.payment_status === "Paid")
-      .reduce((sum, o) => sum + o.grand_total, 0);
+    // Revenue in this screen should come from accounting transactions,
+    // so "Clear ledger" correctly drives this metric even if old orders still exist.
+    const incomeTx = transactionsInRange.filter((t) => t.type === "income");
+    const expenseTx = transactionsInRange.filter((t) => t.type === "expense");
+
+    const salesIncome = incomeTx
+      .filter((t) => !!t.order_id)
+      .reduce((s, t) => s + t.amount, 0);
+    const manualIncome = incomeTx
+      .filter((t) => !t.order_id)
+      .reduce((s, t) => s + t.amount, 0);
+
+    const totalRevenue = salesIncome;
+    const paidRevenue = salesIncome;
     const outstanding = ordersInRange
       .filter((o) => o.payment_status === "Pending")
       .reduce((sum, o) => sum + o.grand_total, 0);
     const stockValue = products.reduce((sum, p) => sum + (p.price || 0) * p.stock_on_hand, 0);
 
-    const incomeTx = transactionsInRange.filter((t) => t.type === "income");
-    const expenseTx = transactionsInRange.filter((t) => t.type === "expense");
-    const manualIncome = incomeTx.reduce((s, t) => s + t.amount, 0);
-    const manualExpense = expenseTx.reduce((s, t) => s + t.amount, 0);
+    const manualExpense = expenseTx
+      // if an expense was linked to an order, treat it as sales-linked
+      // (keeps the UI semantics consistent).
+      .filter((t) => !t.order_id)
+      .reduce((s, t) => s + t.amount, 0);
 
     return {
       totalRevenue,
@@ -244,23 +286,38 @@ const Accounting = () => {
 
   return (
     <DashboardLayout>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <motion.h1
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-2xl font-semibold text-foreground"
-          >
-            Accounting Management
-          </motion.h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Revenue, payments, and manual transactions for Dumi Essence.
-          </p>
-        </div>
-      </div>
+      <div className="ops-workspace">
+      <PageHero
+        eyebrow="House Ledger"
+        title="Financial signal in the same black, charcoal, and gold language."
+        description="Review revenue, outstanding balances, and manual entries in a ledger workspace that feels deliberate, calm, and premium."
+        actions={
+          <>
+            <Button size="sm" onClick={() => setTransactionPanelOpen((o) => !o)} className="gap-1.5">
+              + New transaction
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportLedger} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />
+              Export ledger
+            </Button>
+          </>
+        }
+        aside={
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">Revenue</p>
+              <p className="mt-2 text-2xl font-display font-semibold text-foreground">{formatCurrency(metrics.paidRevenue)}</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">Outstanding</p>
+              <p className="mt-2 text-2xl font-display font-semibold text-foreground">{formatCurrency(metrics.outstanding)}</p>
+            </div>
+          </div>
+        }
+      />
 
       {/* Date range & actions */}
-      <div className="flex flex-wrap items-center gap-4 mb-4">
+      <div className="toolbar-panel mb-4">
         <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <Label className="text-xs text-muted-foreground whitespace-nowrap">From</Label>
@@ -285,39 +342,47 @@ const Accounting = () => {
       </div>
 
       {/* Overview metrics */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs flex-1 min-w-0">
-          <div className="glass-card px-4 py-3 flex flex-col gap-1">
-            <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Total revenue</span>
-            <span className="text-lg font-semibold text-foreground flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs flex-1 min-w-0">
+          <div className="metric-card p-4">
+            <span className="metric-label">Total revenue</span>
+            <span className="metric-value flex items-center gap-2 text-[2rem]">
               <Banknote className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.paidRevenue)}
             </span>
-            <span className="text-muted-foreground text-[11px]">Paid in period</span>
+            <span className="metric-note">Paid in period</span>
           </div>
-          <div className="glass-card px-4 py-3 flex flex-col gap-1">
-            <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Outstanding</span>
-            <span className="text-lg font-semibold text-foreground flex items-center gap-2">
+          <div className="metric-card p-4">
+            <span className="metric-label">Outstanding</span>
+            <span className="metric-value flex items-center gap-2 text-[2rem]">
               <Target className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.outstanding)}
             </span>
-            <span className="text-muted-foreground text-[11px]">Pending in period</span>
+            <span className="metric-note">Pending in period</span>
           </div>
-          <div className="glass-card px-4 py-3 flex flex-col gap-1">
-            <span className="text-muted-foreground uppercase tracking-wide text-[11px]">Ledger net</span>
-            <span className="text-lg font-semibold text-foreground flex items-center gap-2">
+          <div className="metric-card p-4">
+            <span className="metric-label">Ledger net</span>
+            <span className="metric-value flex items-center gap-2 text-[2rem]">
               <AlertCircle className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.manualIncome - metrics.manualExpense)}
             </span>
-            <span className="text-muted-foreground text-[11px]">Income − expense</span>
+            <span className="metric-note">Income minus expense</span>
           </div>
-          <div className="glass-card px-4 py-3 flex flex-col gap-1">
-            <span className="text-muted-foreground uppercase tracking-wide text-[11px]">P&L (period)</span>
-            <span className={`text-lg font-semibold flex items-center gap-2 ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+          <div className="metric-card p-4">
+            <span className="metric-label">P&amp;L (period)</span>
+            <span className={`metric-value flex items-center gap-2 text-[2rem] ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
               <TrendingUp className="h-4 w-4" />
               {formatCurrency(metrics.pnlNet)}
             </span>
-            <span className="text-muted-foreground text-[11px]">Ledger income − expense</span>
+            <span className="metric-note">Ledger income minus expense</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Stock value</span>
+            <span className="metric-value flex items-center gap-2 text-[2rem]">
+              <Package className="h-4 w-4 text-primary" />
+              {formatCurrency(metrics.stockValue)}
+            </span>
+            <span className="metric-note">Selling price × stock on hand</span>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -333,11 +398,11 @@ const Accounting = () => {
 
       {/* Transaction entry panel */}
       {transactionPanelOpen && (
-        <div className="glass-card rounded-lg border border-border p-4 mb-6">
+        <div className="editorial-panel mb-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-foreground">Transaction entry</h2>
-              <p className="text-sm text-muted-foreground">Record income and expenses for bookkeeping.</p>
+              <h2 className="section-title text-[1.75rem]">Transaction entry</h2>
+              <p className="section-copy">Record income and expenses for house bookkeeping.</p>
             </div>
             <div className="flex gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setTransactionPanelOpen(false)}>Cancel</Button>
@@ -346,9 +411,9 @@ const Accounting = () => {
               </Button>
             </div>
           </div>
-          <div className="flex gap-1 border-b border-border mb-4">
-            <button type="button" className="px-3 py-2 text-sm font-medium border-b-2 border-primary text-primary -mb-px">Details</button>
-            <button type="button" className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground">Notes</button>
+          <div className="segmented-tabs mb-4 border-0">
+            <button type="button" className="segmented-tab segmented-tab-active">Details</button>
+            <button type="button" className="segmented-tab">Notes</button>
           </div>
           <form id="transaction-entry-form" onSubmit={handleSubmitTransaction} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -421,12 +486,24 @@ const Accounting = () => {
       )}
 
       {/* Current ledger */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h2 className="text-lg font-semibold text-foreground">Current ledger</h2>
+      <div className="section-header">
+        <div>
+          <h2 className="section-title">Current ledger</h2>
+          <p className="section-copy">A calmer ledger view for current income, expenses, transfers, and supporting receipts.</p>
+        </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleExportLedger} className="gap-1.5">
             <Download className="h-3.5 w-3.5" />
             Export
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setClearLedgerOpen(true)}
+            className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Clear ledger
           </Button>
           <Button variant="outline" size="sm" onClick={refetchAll} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" />
@@ -439,11 +516,11 @@ const Accounting = () => {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="glass-card overflow-hidden"
+        className="data-shell"
       >
         <div className="p-4 border-b border-border/30 flex flex-wrap items-center justify-between gap-2">
           <select
-            className="h-8 rounded-md border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="filter-control h-9 text-xs"
             value={txnFilterType}
             onChange={(e) => { setTxnFilterType(e.target.value as any); setLedgerPage(0); }}
           >
@@ -595,6 +672,64 @@ const Accounting = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Clear ledger dialog */}
+      <Dialog open={clearLedgerOpen} onOpenChange={setClearLedgerOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Clear current ledger</DialogTitle>
+            <DialogDescription>
+              Delete accounting transactions from Supabase. Orders remain unchanged.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <div className="space-y-2">
+              <Label>Scope</Label>
+              <select
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={clearLedgerScope}
+                onChange={(e) => setClearLedgerScope(e.target.value as any)}
+              >
+                <option value="range">This date range</option>
+                <option value="all">All ledger entries</option>
+              </select>
+            </div>
+
+            {clearLedgerScope === "range" && (
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+                <p className="text-xs text-muted-foreground">
+                  Deleting transactions where <span className="font-medium text-foreground">date</span>{" "}
+                  is between <span className="font-medium text-foreground">{dateFrom}</span> and{" "}
+                  <span className="font-medium text-foreground">{dateTo}</span>.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setClearLedgerOpen(false)}
+              disabled={clearLedgerMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={clearLedgerMutation.isPending}
+              onClick={() => {
+                if (!confirm("This will permanently delete accounting transactions. Continue?")) return;
+                clearLedgerMutation.mutate();
+              }}
+            >
+              {clearLedgerMutation.isPending ? "Clearing…" : "Clear ledger"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Advanced features */}
       <div className="mt-10 space-y-3">
         <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
@@ -694,6 +829,7 @@ const Accounting = () => {
           </div>
         </DialogContent>
       </Dialog>
+      </div>
     </DashboardLayout>
   );
 };
