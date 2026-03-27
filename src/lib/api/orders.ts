@@ -1,6 +1,54 @@
 import { supabase } from "@/lib/supabase";
 import type { Order, OrderItem, OrderStatusHistory } from "@/types/database";
 
+function extractUuidFromWebRef(value?: string | null): string | null {
+  if (!value) return null;
+  const m = value.trim().match(/^WEB-([a-f0-9]{32})$/i);
+  if (!m) return null;
+  const hex = m[1].toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+async function resolveStoreOrderIdForOfficeOrder(order: Order): Promise<string | null> {
+  const orderId = order.id?.trim();
+  if (!orderId) return null;
+
+  const { data: mapRow } = await supabase
+    .from("store_office_order_map")
+    .select("store_order_id")
+    .eq("office_order_id", orderId)
+    .maybeSingle();
+  let storeOrderId = (mapRow as { store_order_id?: string } | null)?.store_order_id ?? null;
+  if (storeOrderId) return storeOrderId;
+
+  storeOrderId = extractUuidFromWebRef(order.reference) ?? extractUuidFromWebRef(order.payment_ref);
+  if (storeOrderId) return storeOrderId;
+
+  const email = (order.customer_email || "").trim().toLowerCase();
+  if (!email) return null;
+
+  const officeTotal = Number(order.grand_total || 0);
+  const officeCreatedMs = new Date(String((order as unknown as { created_at?: string }).created_at || order.date || "")).getTime();
+  const { data: guessedOrders } = await supabase
+    .from("store_orders")
+    .select("id, total_amount, created_at")
+    .ilike("email", email)
+    .order("created_at", { ascending: false })
+    .limit(25);
+  const candidates =
+    (guessedOrders as Array<{ id?: string; total_amount?: number; created_at?: string }> | null) ?? [];
+  const best = candidates
+    .map((c) => ({
+      c,
+      amountDiff: Math.abs(Number(c.total_amount || 0) - officeTotal),
+      timeDiff: Number.isFinite(officeCreatedMs)
+        ? Math.abs(new Date(c.created_at || "").getTime() - officeCreatedMs)
+        : Number.MAX_SAFE_INTEGER,
+    }))
+    .sort((a, b) => a.amountDiff - b.amountDiff || a.timeDiff - b.timeDiff)[0]?.c;
+  return best?.id ?? null;
+}
+
 export const ordersApi = {
   async list(): Promise<Order[]> {
     const { data, error } = await supabase
@@ -107,9 +155,71 @@ export const ordersApi = {
       .eq("order_id", id);
     if (historyErr) throw historyErr;
 
-    // 3) Finally delete the order row
+    // 3) Reverse loyalty points linked to this order (net effect),
+    // then let the normal loyalty ledger capture the reversal entry.
+    const { data: loyaltyRows, error: loyaltyReadErr } = await supabase
+      .from("loyalty_point_transactions")
+      .select("customer_id, points_delta")
+      .eq("order_id", id);
+    if (loyaltyReadErr) throw loyaltyReadErr;
+
+    const byCustomer = new Map<string, number>();
+    ((loyaltyRows as Array<{ customer_id?: string; points_delta?: number }> | null) ?? []).forEach((r) => {
+      const customerId = (r.customer_id || "").trim();
+      if (!customerId) return;
+      byCustomer.set(customerId, (byCustomer.get(customerId) ?? 0) + Number(r.points_delta || 0));
+    });
+
+    for (const [customerId, netPointsForOrder] of byCustomer.entries()) {
+      if (!Number.isFinite(netPointsForOrder) || netPointsForOrder === 0) continue;
+      const reversal = -netPointsForOrder;
+      const { error: loyaltyReverseErr } = await supabase.rpc("loyalty_apply_points", {
+        p_customer_id: customerId,
+        p_points_delta: reversal,
+        p_reason: "Order deleted: points reversed",
+        p_order_id: id,
+        p_created_by: "system",
+        p_reference: `order-delete:${id}:${customerId}`,
+      });
+      if (loyaltyReverseErr) throw loyaltyReverseErr;
+    }
+
+    // 4) Finally delete the order row
     const { error } = await supabase.from("orders").delete().eq("id", id);
     if (error) throw error;
+  },
+
+  async listDisplayItemsForOrder(order: Order): Promise<OrderItem[]> {
+    const direct = await orderItemsApi.listByOrderId(order.id);
+    if (direct.length > 0) return direct;
+
+    const storeOrderId = await resolveStoreOrderIdForOfficeOrder(order);
+    if (!storeOrderId) return [];
+
+    const { data: rows, error } = await supabase
+      .from("store_order_items")
+      .select("id, product_name, product_id, quantity, unit_price, line_total")
+      .eq("order_id", storeOrderId)
+      .order("id", { ascending: true });
+    if (error) throw error;
+
+    return ((rows as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+      id: String(r.id || ""),
+      order_id: storeOrderId,
+      product_id: r.product_id ? String(r.product_id) : "",
+      product_name: String(r.product_name || "Item"),
+      product_category: "Perfume",
+      product_type: "",
+      sku: r.product_id ? String(r.product_id) : "",
+      image_url: "",
+      quantity: Number(r.quantity || 0),
+      unit_price: Number(r.unit_price || 0),
+      discount: 0,
+      tax: 0,
+      line_total: Number(r.line_total || 0),
+      fulfilment_status: "Pending",
+      created_at: new Date().toISOString(),
+    }));
   },
 };
 

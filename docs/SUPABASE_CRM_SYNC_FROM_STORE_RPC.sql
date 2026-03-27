@@ -62,9 +62,11 @@ begin
 
   select * into sa
   from public.store_client_addresses
-  where client_id = p_client_id and is_default = true
-  order by created_at desc nulls last
+  where client_id = p_client_id
+  order by is_default desc, created_at desc nulls last
   limit 1;
+
+  -- address is chosen by: default first (if present), otherwise latest
 
   select c.id into v_cid
   from public.customers c

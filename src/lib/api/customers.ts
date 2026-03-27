@@ -29,11 +29,33 @@ async function syncFromStoreClientFallback(clientId: string): Promise<void> {
     .eq("is_default", true)
     .maybeSingle();
 
+  // Some deployments may not correctly mark `is_default=true` on the storefront side.
+  // In that case, fall back to the most recently created address so `/clients`
+  // still reflects updated address details.
+  let addrForSync = addr;
+  if (
+    !addrForSync ||
+    !(addrForSync.line1 as string | null)?.trim() ||
+    !(addrForSync.city as string | null)?.trim() ||
+    !(addrForSync.postal_code as string | null)?.trim()
+  ) {
+    const { data: latestAddr, error: latestAddrErr } = await supabase
+      .from("store_client_addresses")
+      .select("line1,suburb,city,province,postal_code")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestAddrErr) throw latestAddrErr;
+    addrForSync = latestAddr;
+  }
+
   const hasCompleteAddress =
-    !!addr &&
-    !!(addr.line1 as string | null)?.trim() &&
-    !!(addr.city as string | null)?.trim() &&
-    !!(addr.postal_code as string | null)?.trim();
+    !!addrForSync &&
+    !!(addrForSync.line1 as string | null)?.trim() &&
+    !!(addrForSync.city as string | null)?.trim() &&
+    !!(addrForSync.postal_code as string | null)?.trim();
 
   await customersApi.syncFromStorefrontWalkIn({
     email,
@@ -44,11 +66,11 @@ async function syncFromStoreClientFallback(clientId: string): Promise<void> {
     emailConsent: pref?.email_notifications ?? true,
     address: hasCompleteAddress
       ? {
-          address_line: String(addr!.line1).trim(),
-          suburb: addr?.suburb ? String(addr.suburb).trim() : undefined,
-          city: String(addr!.city).trim(),
-          province: addr?.province ? String(addr.province).trim() : undefined,
-          postal_code: String(addr!.postal_code).trim(),
+          address_line: String(addrForSync!.line1).trim(),
+          suburb: addrForSync?.suburb ? String(addrForSync.suburb).trim() : undefined,
+          city: String(addrForSync!.city).trim(),
+          province: addrForSync?.province ? String(addrForSync.province).trim() : undefined,
+          postal_code: String(addrForSync!.postal_code).trim(),
         }
       : null,
   });

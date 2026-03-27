@@ -54,14 +54,15 @@ as $$
   left join lateral (
     select *
     from public.store_client_addresses a2
-    where a2.client_id = sc.id and a2.is_default = true
+    where a2.client_id = sc.id
     order by a2.updated_at desc nulls last
     limit 1
   ) a on true
   left join lateral (
     select *
     from public.addresses ad2
-    where ad2.customer_id = c.id and ad2.is_default = true
+    where ad2.customer_id = c.id
+    order by ad2.is_default desc, ad2.updated_at desc nulls last
     limit 1
   ) ad on true
 $$;

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import PageHero from "@/components/PageHero";
 import { motion } from "framer-motion";
@@ -63,8 +63,15 @@ type LineItem = {
   line_total: number;
 };
 
+type OfficeOrderPopInfo = {
+  has_pop: boolean;
+  pop_url: string | null;
+  pop_uploaded_at: string | null;
+};
+
 const Orders = () => {
   const queryClient = useQueryClient();
+  const autoMarkedPaidRef = useRef<Set<string>>(new Set());
   const [searchParams] = useSearchParams();
   const { data: orders = [], isLoading, error } = useQuery<Order[]>({
     queryKey: ["orders"],
@@ -75,11 +82,68 @@ const Orders = () => {
     queryKey: ["products"],
     queryFn: productsApi.list,
   });
+  const { data: popByOfficeOrderId = {} } = useQuery<Record<string, OfficeOrderPopInfo>>({
+    queryKey: ["officeOrderPopLinks", orders.map((o) => o.id).join(",")],
+    enabled: orders.length > 0,
+    queryFn: async () => {
+      const officeOrderIds = Array.from(new Set(orders.map((o) => o.id).filter(Boolean)));
+      if (officeOrderIds.length === 0) return {};
+
+      const { data: mapRows, error: mapErr } = await supabase
+        .from("store_office_order_map")
+        .select("office_order_id, store_order_id")
+        .in("office_order_id", officeOrderIds);
+      if (mapErr) throw mapErr;
+
+      const mappings = (mapRows as Array<{ office_order_id?: string; store_order_id?: string }> | null) ?? [];
+      const storeOrderIds = Array.from(
+        new Set(mappings.map((m) => (m.store_order_id || "").trim()).filter(Boolean)),
+      );
+      if (storeOrderIds.length === 0) return {};
+
+      const { data: popRows, error: popErr } = await supabase
+        .from("store_payment_proofs")
+        .select("order_id, public_url, created_at")
+        .in("order_id", storeOrderIds)
+        .order("created_at", { ascending: false });
+      if (popErr) throw popErr;
+
+      const latestByStoreOrder: Record<string, { public_url: string | null; created_at: string | null }> = {};
+      ((popRows as Array<{ order_id?: string; public_url?: string | null; created_at?: string | null }> | null) ?? [])
+        .forEach((r) => {
+          const soId = (r.order_id || "").trim();
+          if (!soId || latestByStoreOrder[soId]) return;
+          latestByStoreOrder[soId] = {
+            public_url: r.public_url ?? null,
+            created_at: r.created_at ?? null,
+          };
+        });
+
+      const result: Record<string, OfficeOrderPopInfo> = {};
+      mappings.forEach((m) => {
+        const officeId = (m.office_order_id || "").trim();
+        const storeId = (m.store_order_id || "").trim();
+        if (!officeId || !storeId) return;
+        const latest = latestByStoreOrder[storeId];
+        result[officeId] = {
+          has_pop: !!latest,
+          pop_url: latest?.public_url ?? null,
+          pop_uploaded_at: latest?.created_at ?? null,
+        };
+      });
+      return result;
+    },
+  });
 
   const [channel, setChannel] = useState<OrderChannel>("Online Orders");
   const [stage, setStage] = useState<"All" | OrderStage>("All");
   const [search, setSearch] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [paymentProofs, setPaymentProofs] = useState<
+    Array<{ name: string; path: string; url: string | null }>
+  >([]);
+  const [proofsLoading, setProofsLoading] = useState(false);
+  const [proofsError, setProofsError] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -121,15 +185,178 @@ const Orders = () => {
 
   const { data: orderItems = [] } = useQuery<OrderItem[]>({
     queryKey: ["orderItems", selectedOrder?.id],
-    queryFn: () => (selectedOrder ? orderItemsApi.listByOrderId(selectedOrder.id) : Promise.resolve([])),
+    queryFn: () => (selectedOrder ? ordersApi.listDisplayItemsForOrder(selectedOrder) : Promise.resolve([])),
     enabled: !!selectedOrder,
   });
+  const displayOrderItems = orderItems;
 
   const { data: orderHistory = [] } = useQuery({
     queryKey: ["orderHistory", selectedOrder?.id],
     queryFn: () => (selectedOrder ? orderHistoryApi.listByOrderId(selectedOrder.id) : Promise.resolve([])),
     enabled: !!selectedOrder,
   });
+
+  useEffect(() => {
+    const loadPaymentProofs = async () => {
+      if (!selectedOrder) {
+        setPaymentProofs([]);
+        setProofsError(null);
+        return;
+      }
+      setProofsLoading(true);
+      setProofsError(null);
+      try {
+        let storeClientId: string | null = null;
+        const orderId = (selectedOrder.id || "").trim();
+        let storeOrderId: string | null = null;
+        const officeCustomerId = (selectedOrder.customer_id || "").trim() || null;
+        const officeReference = (selectedOrder.reference || "").trim();
+        const officePaymentRef = (selectedOrder.payment_ref || "").trim();
+
+        const extractUuidFromWebRef = (value: string): string | null => {
+          const m = value.match(/^WEB-([a-f0-9]{16}|[a-f0-9]{32})$/i);
+          if (!m) return null;
+          const hex = m[1].toLowerCase();
+          if (hex.length === 16) return null;
+          return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+        };
+
+        // Resolve linked storefront order first via mapping table.
+        const { data: mapRow } = await supabase
+          .from("store_office_order_map")
+          .select("store_order_id")
+          .eq("office_order_id", orderId)
+          .maybeSingle();
+        storeOrderId = (mapRow as { store_order_id?: string } | null)?.store_order_id ?? null;
+
+        if (!storeOrderId) {
+          storeOrderId = extractUuidFromWebRef(officeReference) ?? extractUuidFromWebRef(officePaymentRef);
+        }
+
+        if (!storeOrderId) {
+          const orderEmail = (selectedOrder.customer_email || "").trim().toLowerCase();
+          if (orderEmail) {
+            const { data: guessedOrders } = await supabase
+              .from("store_orders")
+              .select("id, client_id, total_amount, created_at")
+              .ilike("email", orderEmail)
+              .order("created_at", { ascending: false })
+              .limit(25);
+            const candidates =
+              (guessedOrders as Array<{ id?: string; client_id?: string | null; total_amount?: number; created_at?: string }> | null) ?? [];
+            const officeTotal = Number(selectedOrder.grand_total || 0);
+            const officeCreatedMs = new Date(
+              String((selectedOrder as unknown as { created_at?: string }).created_at || selectedOrder.date || ""),
+            ).getTime();
+            const best = candidates
+              .map((c) => ({
+                c,
+                amountDiff: Math.abs(Number(c.total_amount || 0) - officeTotal),
+                timeDiff: Number.isFinite(officeCreatedMs)
+                  ? Math.abs(new Date(c.created_at || "").getTime() - officeCreatedMs)
+                  : Number.MAX_SAFE_INTEGER,
+              }))
+              .sort((a, b) => a.amountDiff - b.amountDiff || a.timeDiff - b.timeDiff)[0]?.c;
+            if (best?.id) {
+              storeOrderId = best.id;
+              storeClientId = best.client_id ?? null;
+            }
+          }
+        }
+
+        if (storeOrderId) {
+          const { data: so } = await supabase
+            .from("store_orders")
+            .select("client_id")
+            .eq("id", storeOrderId)
+            .maybeSingle();
+          storeClientId = (so as { client_id?: string } | null)?.client_id ?? null;
+        }
+
+        // Source of truth: store_payment_proofs table.
+        const orderCandidates = Array.from(new Set([storeOrderId, orderId].filter(Boolean)));
+        for (const candidateOrderId of orderCandidates) {
+          const { data: byOrder, error: byOrderErr } = await supabase
+            .from("store_payment_proofs")
+            .select("id, order_id, client_id, public_url, storage_path, file_name, file_type, file_size_bytes, created_at")
+            .eq("order_id", candidateOrderId)
+            .order("created_at", { ascending: false });
+          if (byOrderErr) throw byOrderErr;
+
+          const rows = (byOrder as Array<Record<string, unknown>> | null) ?? [];
+          if (rows.length > 0) {
+            setPaymentProofs(
+              rows.map((r) => ({
+                name: String(r.file_name || r.storage_path || r.id || "proof"),
+                path: String(r.storage_path || r.id || ""),
+                url: r.public_url ? String(r.public_url) : null,
+              })),
+            );
+            return;
+          }
+        }
+
+        const clientCandidates = Array.from(new Set([storeClientId, officeCustomerId].filter(Boolean)));
+        for (const candidateClientId of clientCandidates) {
+          const { data: byClient, error: byClientErr } = await supabase
+            .from("store_payment_proofs")
+            .select("id, order_id, client_id, public_url, storage_path, file_name, file_type, file_size_bytes, created_at")
+            .eq("client_id", candidateClientId)
+            .order("created_at", { ascending: false });
+          if (byClientErr) throw byClientErr;
+
+          const rows = (byClient as Array<Record<string, unknown>> | null) ?? [];
+          if (rows.length > 0) {
+            setPaymentProofs(
+              rows.map((r) => ({
+                name: String(r.file_name || r.storage_path || r.id || "proof"),
+                path: String(r.storage_path || r.id || ""),
+                url: r.public_url ? String(r.public_url) : null,
+              })),
+            );
+            return;
+          }
+        }
+
+        // Fallback: direct storage folder lookup (legacy/current uploader pattern)
+        // payment_proofs/store_orders/<store_order_id>/...
+        const storageOrderCandidates = Array.from(new Set([storeOrderId, ...orderCandidates].filter(Boolean)));
+        const bucket = supabase.storage.from("payment_proofs");
+        for (const candidate of storageOrderCandidates) {
+          const prefix = `store_orders/${candidate}`;
+          const { data: files, error: listErr } = await bucket.list(prefix, {
+            limit: 100,
+            sortBy: { column: "created_at", order: "desc" },
+          });
+          if (listErr) continue;
+          const validFiles = (files || []).filter((f) => !!f?.name && !!f?.id);
+          if (validFiles.length === 0) continue;
+          const withUrls = await Promise.all(
+            validFiles.map(async (f) => {
+              const path = `${prefix}/${f.name}`;
+              const { data: signed } = await bucket.createSignedUrl(path, 60 * 60);
+              return {
+                name: f.name,
+                path,
+                url: signed?.signedUrl ?? null,
+              };
+            }),
+          );
+          setPaymentProofs(withUrls);
+          return;
+        }
+
+        setPaymentProofs([]);
+      } catch {
+        setPaymentProofs([]);
+        setProofsError("Failed to load PoP records from `store_payment_proofs`.");
+      } finally {
+        setProofsLoading(false);
+      }
+    };
+
+    void loadPaymentProofs();
+  }, [selectedOrder]);
 
   // Prefill create order when arriving from Clients (URL + CRM; delivery* params are a fallback if RLS blocks reads in Orders)
   useEffect(() => {
@@ -404,6 +631,59 @@ const Orders = () => {
       toast.error(err?.message || "Failed to delete order.");
     },
   });
+
+  const approvePaymentMutation = useMutation({
+    mutationFn: async (id: string) =>
+      ordersApi.update(id, {
+        payment_status: "Paid",
+        paid_at: new Date().toISOString(),
+      }),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      setSelectedOrder(updated);
+      toast.success("Payment marked as received.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to approve payment.");
+    },
+  });
+
+  useEffect(() => {
+    const markOrdersPaidFromPop = async () => {
+      const toMarkPaid = orders
+        .filter((order) => {
+          const pop = popByOfficeOrderId[order.id];
+          return (
+            !!pop?.has_pop &&
+            order.payment_status !== "Paid" &&
+            !autoMarkedPaidRef.current.has(order.id)
+          );
+        })
+        .map((order) => order.id);
+
+      if (toMarkPaid.length === 0) return;
+
+      try {
+        await Promise.all(
+          toMarkPaid.map(async (id) => {
+            autoMarkedPaidRef.current.add(id);
+            await ordersApi.update(id, {
+              payment_status: "Paid",
+              paid_at: new Date().toISOString(),
+            });
+          }),
+        );
+
+        await queryClient.invalidateQueries({ queryKey: ["orders"] });
+        toast.success(`Auto-marked ${toMarkPaid.length} order(s) as Paid from POP.`);
+      } catch (err) {
+        toMarkPaid.forEach((id) => autoMarkedPaidRef.current.delete(id));
+        console.error("Failed to auto-mark paid from POP", err);
+      }
+    };
+
+    void markOrdersPaidFromPop();
+  }, [orders, popByOfficeOrderId, queryClient]);
 
   const totals = useMemo(() => {
     const total = orders.length;
@@ -697,7 +977,7 @@ const Orders = () => {
         const selectedOrders = orders.filter((o) => selectedItems.includes(o.id));
         const ordersWithItems = await Promise.all(
           selectedOrders.map(async (order) => {
-            const items = await orderItemsApi.listByOrderId(order.id);
+            const items = await ordersApi.listDisplayItemsForOrder(order);
             return { ...order, items };
           })
         );
@@ -783,14 +1063,15 @@ Status: ${order.status} (${order.stage})`;
 
   const handleDownloadReceipt = async () => {
     if (!selectedOrder) return;
-    if (!orderItems || orderItems.length === 0) {
+    if (!displayOrderItems || displayOrderItems.length === 0) {
       toast.error("No order items to include in receipt");
       return;
     }
     try {
-      const itemsForReceipt = orderItems.map((item, index) => {
+      const itemsForReceipt = displayOrderItems.map((item, index) => {
+        const productId = "product_id" in item ? item.product_id : undefined;
         const product = products.find(
-          (p) => p.id === item.product_id || p.sku === item.sku,
+          (p) => p.id === productId || p.sku === item.sku,
         );
         return {
           index: index + 1,
@@ -994,10 +1275,10 @@ Status: ${order.status} (${order.stage})`;
           </div>
         )}
         {!isLoading && !error && (
-          <table className="w-full text-sm">
+          <table className="w-full text-xs table-fixed">
             <thead>
               <tr className="border-b border-border/60">
-                <th className="px-4 py-3">
+                <th className="w-8 px-2 py-2">
                   <input
                     type="checkbox"
                     checked={selectedItems.length === filteredOrders.length && filteredOrders.length > 0}
@@ -1006,7 +1287,10 @@ Status: ${order.status} (${order.stage})`;
                   />
                 </th>
                 {["Order ID", "Items", "Status", "Payment", "Location", "Date", "Total", "Customer", "Phone", "Ref", "Actions"].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">
+                  <th
+                    key={h}
+                    className="text-left px-2 py-2 text-[11px] font-medium text-muted-foreground whitespace-nowrap"
+                  >
                     {h}
                   </th>
                 ))}
@@ -1034,7 +1318,7 @@ Status: ${order.status} (${order.stage})`;
                     transition={{ delay: 0.05 * i }}
                     className="border-b border-border/40 transition-colors"
                   >
-                    <td className="px-4 py-3">
+                    <td className="w-8 px-2 py-2">
                       <input
                         type="checkbox"
                         checked={selectedItems.includes(order.id)}
@@ -1042,35 +1326,64 @@ Status: ${order.status} (${order.stage})`;
                         className="rounded border-border"
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-emerald-300">{order.id}</td>
-                    <td className="px-4 py-3 text-[11px] text-foreground max-w-[200px] truncate">
+                    <td className="px-2 py-2 font-mono text-[11px] text-emerald-300 truncate">
+                      {order.id.slice(0, 8)}
+                    </td>
+                    <td className="px-2 py-2 text-[11px] text-foreground truncate">
                       {orderItems.length > 0 ? `${orderItems.length} items` : "—"}
                     </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${statusPill[order.status]}`}>
+                    <td className="px-2 py-2">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusPill[order.status]}`}>
                         {order.status}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`text-[11px] ${
-                          order.payment_status === "Paid"
-                            ? "text-emerald-400"
-                            : order.payment_status === "Failed"
-                              ? "text-rose-400"
-                              : "text-amber-300"
-                        }`}
-                      >
-                        {order.payment_status}
-                      </span>
+                    <td className="px-2 py-2">
+                      {(() => {
+                        const pop = popByOfficeOrderId[order.id];
+                        return (
+                          <div className="flex flex-col gap-1">
+                            <span
+                              className={`text-[11px] ${
+                                order.payment_status === "Paid"
+                                  ? "text-emerald-400"
+                                  : order.payment_status === "Failed"
+                                    ? "text-rose-400"
+                                    : "text-amber-300"
+                              }`}
+                            >
+                              {order.payment_status}
+                            </span>
+                            {pop?.has_pop ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-emerald-300">POP Uploaded</span>
+                                <button
+                                  type="button"
+                                  className="text-[10px] text-emerald-300 underline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (pop.pop_url) window.open(pop.pop_url, "_blank", "noopener,noreferrer");
+                                  }}
+                                >
+                                  View POP
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-amber-300">Awaiting POP</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
-                    <td className="px-4 py-3 text-[11px] text-muted-foreground">{order.location}</td>
-                    <td className="px-4 py-3 text-[11px] text-muted-foreground">{order.date}</td>
-                    <td className="px-4 py-3 text-[11px] font-semibold text-foreground">R{order.grand_total.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-[11px] text-muted-foreground">{order.customer_name}</td>
-                    <td className="px-4 py-3 text-[11px] text-muted-foreground">{order.customer_phone}</td>
-                    <td className="px-4 py-3 text-[11px] text-muted-foreground">{order.reference}</td>
-                    <td className="px-4 py-3 text-[11px] text-emerald-300 underline cursor-pointer" onClick={() => setSelectedOrder(order)}>
+                    <td className="px-2 py-2 text-[11px] text-muted-foreground truncate">{order.location}</td>
+                    <td className="px-2 py-2 text-[11px] text-muted-foreground whitespace-nowrap">{order.date}</td>
+                    <td className="px-2 py-2 text-[11px] font-semibold text-foreground whitespace-nowrap">R{order.grand_total.toFixed(2)}</td>
+                    <td className="px-2 py-2 text-[11px] text-muted-foreground truncate">{order.customer_name}</td>
+                    <td className="px-2 py-2 text-[11px] text-muted-foreground whitespace-nowrap">{order.customer_phone}</td>
+                    <td className="px-2 py-2 text-[11px] text-muted-foreground truncate">{order.reference}</td>
+                    <td
+                      className="px-2 py-2 text-[11px] text-emerald-300 underline cursor-pointer whitespace-nowrap"
+                      onClick={() => setSelectedOrder(order)}
+                    >
                       View
                     </td>
                   </motion.tr>
@@ -1131,6 +1444,16 @@ Status: ${order.status} (${order.stage})`;
               <Button size="sm" variant="outline" onClick={() => handleEditOrder(selectedOrder)}>
                 <Edit size={14} /> Edit Order
               </Button>
+              {selectedOrder.payment_status !== "Paid" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => approvePaymentMutation.mutate(selectedOrder.id)}
+                  disabled={approvePaymentMutation.isPending}
+                >
+                  <CheckCircle2 size={14} /> Approve payment received
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -1167,7 +1490,7 @@ Status: ${order.status} (${order.stage})`;
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase">Order items</p>
               <div className="glass-card p-4">
-                {orderItems.length === 0 ? (
+                {displayOrderItems.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No items found</p>
                 ) : (
                   <table className="w-full text-xs">
@@ -1182,7 +1505,7 @@ Status: ${order.status} (${order.stage})`;
                       </tr>
                     </thead>
                     <tbody>
-                      {orderItems.map((item) => (
+                      {displayOrderItems.map((item) => (
                         <tr key={item.id} className="border-b border-border/20">
                           <td className="py-2 text-foreground">{item.product_name}</td>
                           <td className="py-2 text-muted-foreground">{item.sku}</td>
@@ -1225,6 +1548,41 @@ Status: ${order.status} (${order.stage})`;
                 <p className="text-foreground">
                   {selectedOrder.payment_status} · {selectedOrder.payment_method || "—"}
                 </p>
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <p className="text-muted-foreground">PoP (Proof of Payment)</p>
+                {proofsLoading ? (
+                  <p className="text-foreground">Loading PoP files…</p>
+                ) : proofsError ? (
+                  <p className="text-red-300">
+                    Unable to read PoP records: {proofsError}
+                  </p>
+                ) : paymentProofs.length === 0 ? (
+                  <p className="text-foreground">
+                    No PoP records found in `store_payment_proofs` for this order/client. If this is unexpected,
+                    run `docs/SUPABASE_OFFICE_READ_STOREFRONT_ORDERS_AND_POP.sql` to grant Office read access.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {paymentProofs.map((p) => (
+                      <div key={p.path} className="flex items-center justify-between gap-2">
+                        <p className="text-foreground truncate">{p.name}</p>
+                        {p.url ? (
+                          <a
+                            href={p.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-emerald-300 underline whitespace-nowrap"
+                          >
+                            View PoP
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground">Unavailable</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground">Shipping method</p>
