@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useMemo, useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -63,6 +63,7 @@ const normalizeVendorKey = (s: string | null | undefined) =>
 
 const Vendors = () => {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<
     "directory" | "expenses" | "summary" | "deOrders"
   >("directory");
@@ -91,6 +92,22 @@ const Vendors = () => {
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
   const [evidenceProforma, setEvidenceProforma] = useState<ScentProforma | null>(null);
   const [expenseReferenceFilter, setExpenseReferenceFilter] = useState("DE-000001");
+  const [expenseVendorFilter, setExpenseVendorFilter] = useState("");
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "directory" || tab === "expenses" || tab === "summary" || tab === "deOrders") {
+      setActiveTab(tab);
+    }
+    if (searchParams.has("vendor")) {
+      setExpenseVendorFilter(decodeURIComponent(searchParams.get("vendor") || "").trim());
+    } else {
+      setExpenseVendorFilter("");
+    }
+    if (searchParams.has("ref")) {
+      setExpenseReferenceFilter(searchParams.get("ref") ?? "");
+    }
+  }, [searchParams]);
 
   const { data: vendors = [], isLoading } = useQuery<Vendor[]>({
     queryKey: ["vendors"],
@@ -224,13 +241,20 @@ const Vendors = () => {
 
   const filteredExpenseRecords = useMemo(() => {
     const q = expenseReferenceFilter.trim().toLowerCase();
-    if (!q) return expenseRecords;
-    return expenseRecords.filter((t) => {
-      const ref = (t.reference || "").trim().toLowerCase();
-      const desc = (t.description || "").toLowerCase();
-      return ref === q || ref.includes(q) || desc.includes(q);
-    });
-  }, [expenseRecords, expenseReferenceFilter]);
+    const v = expenseVendorFilter.trim().toLowerCase();
+    let rows = expenseRecords;
+    if (q) {
+      rows = rows.filter((t) => {
+        const ref = (t.reference || "").trim().toLowerCase();
+        const desc = (t.description || "").toLowerCase();
+        return ref === q || ref.includes(q) || desc.includes(q);
+      });
+    }
+    if (v) {
+      rows = rows.filter((t) => (t.vendor || "").trim().toLowerCase() === v);
+    }
+    return rows;
+  }, [expenseRecords, expenseReferenceFilter, expenseVendorFilter]);
 
   const ledgerCoversProformaReference = (pfRef: string | null | undefined) => {
     const r = (pfRef || "").trim().toLowerCase();
@@ -851,6 +875,28 @@ const Vendors = () => {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {expenseVendorFilter ? (
+                  <Badge variant="secondary" className="font-normal gap-1.5">
+                    Vendor: {expenseVendorFilter}
+                    <button
+                      type="button"
+                      className="underline-offset-2 hover:underline text-foreground/80"
+                      onClick={() => {
+                        setExpenseVendorFilter("");
+                        setSearchParams(
+                          (prev) => {
+                            const n = new URLSearchParams(prev);
+                            n.delete("vendor");
+                            return n;
+                          },
+                          { replace: true },
+                        );
+                      }}
+                    >
+                      Clear
+                    </button>
+                  </Badge>
+                ) : null}
                 <Label className="text-muted-foreground whitespace-nowrap shrink-0">Reference</Label>
                 <Input
                   className="h-8 w-[140px] font-mono text-xs"

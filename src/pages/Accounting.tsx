@@ -5,7 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ordersApi } from "@/lib/api/orders";
 import { productsApi } from "@/lib/api/products";
@@ -34,6 +35,7 @@ import {
   Mail,
   CreditCard,
   LineChart,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCSV } from "@/lib/utils/bulk-actions";
@@ -56,6 +58,7 @@ const getMonthStartEnd = () => {
 
 const Accounting = () => {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { dateFrom: defaultFrom, dateTo: defaultTo } = getMonthStartEnd();
   const [dateFrom, setDateFrom] = useState(defaultFrom);
   const [dateTo, setDateTo] = useState(defaultTo);
@@ -80,6 +83,17 @@ const Accounting = () => {
   const [clearLedgerOpen, setClearLedgerOpen] = useState(false);
   const [clearLedgerScope, setClearLedgerScope] = useState<"range" | "all">("range");
   const [accountingTab, setAccountingTab] = useState<"ledger" | "expenses">("ledger");
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t === "expenses") {
+      setAccountingTab("expenses");
+      setTxnFilterType("expense");
+      setLedgerPage(0);
+    } else if (t === "ledger") {
+      setAccountingTab("ledger");
+    }
+  }, [searchParams]);
 
   const { data: orders = [], refetch: refetchOrders } = useQuery<Order[]>({
     queryKey: ["orders", "accounting"],
@@ -359,7 +373,17 @@ const Accounting = () => {
         <button
           type="button"
           className={`segmented-tab ${accountingTab === "ledger" ? "segmented-tab-active" : ""}`}
-          onClick={() => setAccountingTab("ledger")}
+          onClick={() => {
+            setAccountingTab("ledger");
+            setSearchParams(
+              (prev) => {
+                const n = new URLSearchParams(prev);
+                n.delete("tab");
+                return n;
+              },
+              { replace: true },
+            );
+          }}
         >
           Ledger
         </button>
@@ -370,6 +394,14 @@ const Accounting = () => {
             setAccountingTab("expenses");
             setTxnFilterType("expense");
             setLedgerPage(0);
+            setSearchParams(
+              (prev) => {
+                const n = new URLSearchParams(prev);
+                n.set("tab", "expenses");
+                return n;
+              },
+              { replace: true },
+            );
           }}
         >
           Expenses
@@ -521,22 +553,61 @@ const Accounting = () => {
       )}
 
       {accountingTab === "expenses" && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-xs">
-          <div className="metric-card">
-            <span className="metric-label">Total expenses</span>
-            <span className="metric-value">{formatCurrency(expensesInRange.reduce((s, t) => s + Math.abs(t.amount), 0))}</span>
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3 text-xs">
+            <div className="metric-card">
+              <span className="metric-label">Total expenses</span>
+              <span className="metric-value">{formatCurrency(expensesInRange.reduce((s, t) => s + Math.abs(t.amount), 0))}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">Profit after expenses</span>
+              <span className={`metric-value ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.pnlNet)}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">Top vendor cost</span>
+              <span className="metric-value">
+                {expensesByVendor[0] ? `${expensesByVendor[0][0]} (${formatCurrency(expensesByVendor[0][1])})` : "-"}
+              </span>
+            </div>
           </div>
-          <div className="metric-card">
-            <span className="metric-label">Profit after expenses</span>
-            <span className={`metric-value ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.pnlNet)}</span>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between rounded-xl border border-border/50 bg-muted/15 px-4 py-3 mb-4 text-xs">
+            <p className="text-muted-foreground max-w-xl">
+              Same accounting transactions as the Expenses and Vendors expense ledgers. Open either workspace with this date range (and vendor filter where supported).
+            </p>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
+                <Link to={`/expenses?from=${encodeURIComponent(dateFrom)}&to=${encodeURIComponent(dateTo)}&tab=ledger`}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Expenses page
+                </Link>
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
+                <Link to="/vendors?tab=expenses&ref=">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Vendors → Expenses
+                </Link>
+              </Button>
+              {expensesByVendor[0] && expensesByVendor[0][0] !== "Unassigned" && (
+                <>
+                  <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
+                    <Link
+                      to={`/expenses?from=${encodeURIComponent(dateFrom)}&to=${encodeURIComponent(dateTo)}&vendor=${encodeURIComponent(expensesByVendor[0][0])}&tab=ledger`}
+                    >
+                      Top vendor in Expenses
+                    </Link>
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
+                    <Link
+                      to={`/vendors?tab=expenses&ref=&vendor=${encodeURIComponent(expensesByVendor[0][0])}`}
+                    >
+                      Top vendor in Vendors
+                    </Link>
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
-          <div className="metric-card">
-            <span className="metric-label">Top vendor cost</span>
-            <span className="metric-value">
-              {expensesByVendor[0] ? `${expensesByVendor[0][0]} (${formatCurrency(expensesByVendor[0][1])})` : "-"}
-            </span>
-          </div>
-        </div>
+        </>
       )}
 
       {/* Current ledger */}

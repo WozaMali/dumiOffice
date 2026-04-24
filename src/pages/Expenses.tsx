@@ -32,12 +32,15 @@ import { accountingApi } from "@/lib/api/accounting";
 import { ordersApi } from "@/lib/api/orders";
 import { vendorsApi } from "@/lib/api/vendors";
 import type { AccountingTransaction, AccountingCategory, Vendor } from "@/types/database";
-import { useMemo, useState, useRef } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 
 const formatCurrency = (amount: number) =>
   `R${amount.toLocaleString("en-ZA", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 type TabId = "overview" | "ledger" | "category" | "campaign";
+
+const isoDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
 const EXPENSE_STREAM_HINTS: Record<string, string> = {
   "Campaign - Online": "Meta ads, Google ads, influencers, affiliate",
@@ -51,6 +54,7 @@ const EXPENSE_STREAM_HINTS: Record<string, string> = {
 const Expenses = () => {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [searchParams] = useSearchParams();
 
   const { data: transactions = [], isLoading } = useQuery<AccountingTransaction[]>({
     queryKey: ["accountingTransactions"],
@@ -92,6 +96,30 @@ const Expenses = () => {
   const [filterCampaign, setFilterCampaign] = useState("");
   const [filterVendor, setFilterVendor] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+
+  useEffect(() => {
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    const vendor = searchParams.get("vendor");
+    const tab = searchParams.get("tab");
+    let openFilters = false;
+    if (from && isoDateRe.test(from)) {
+      setFilterDateFrom(from);
+      openFilters = true;
+    }
+    if (to && isoDateRe.test(to)) {
+      setFilterDateTo(to);
+      openFilters = true;
+    }
+    if (vendor) {
+      setFilterVendor(decodeURIComponent(vendor));
+      openFilters = true;
+    }
+    if (tab === "overview" || tab === "ledger" || tab === "category" || tab === "campaign") {
+      setActiveTab(tab);
+    }
+    if (openFilters) setShowFilters(true);
+  }, [searchParams]);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AccountingTransaction | null>(null);
