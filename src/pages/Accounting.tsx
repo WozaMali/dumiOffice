@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadCSV } from "@/lib/utils/bulk-actions";
+import { exportAccountingExcel, exportAccountingPdf } from "@/lib/utils/accounting-export";
 
 const formatCurrency = (amount: number) =>
   `R${amount.toLocaleString("en-ZA", {
@@ -334,7 +335,7 @@ const Accounting = () => {
     },
   });
 
-  const handleExportLedger = () => {
+  const handleExportLedgerCsv = () => {
     const headers = ["Date", "Type", "Category", "Description", "Amount", "Reference"];
     const rows = filteredTransactions.map((t) => {
       const category = categories.find((c) => c.id === t.category_id);
@@ -352,6 +353,24 @@ const Accounting = () => {
       ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")),
     ].join("\n");
     downloadCSV(csv, `accounting-ledger-${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  const handleExportLedgerPdf = async () => {
+    await exportAccountingPdf({
+      transactions: filteredTransactions,
+      categories,
+      dateFrom,
+      dateTo,
+    });
+  };
+
+  const handleExportLedgerExcel = async () => {
+    await exportAccountingExcel({
+      transactions: filteredTransactions,
+      categories,
+      dateFrom,
+      dateTo,
+    });
   };
 
   const handleSubmitTransaction = (e: React.FormEvent) => {
@@ -380,9 +399,16 @@ const Accounting = () => {
             <Button size="sm" onClick={() => setTransactionPanelOpen((o) => !o)} className="gap-1.5">
               + New transaction
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExportLedger} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={handleExportLedgerPdf} className="gap-1.5">
               <Download className="h-3.5 w-3.5" />
-              Export ledger
+              Export PDF
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportLedgerExcel} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />
+              Export Excel
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleExportLedgerCsv} className="gap-1.5 text-muted-foreground">
+              CSV
             </Button>
           </>
         }
@@ -672,9 +698,13 @@ const Accounting = () => {
           <p className="section-copy">A calmer ledger view for current income, expenses, transfers, and supporting receipts.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleExportLedger} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={handleExportLedgerPdf} className="gap-1.5">
             <Download className="h-3.5 w-3.5" />
-            Export
+            PDF
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportLedgerExcel} className="gap-1.5">
+            <Download className="h-3.5 w-3.5" />
+            Excel
           </Button>
           <Button
             variant="outline"
