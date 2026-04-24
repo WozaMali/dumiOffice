@@ -1,11 +1,10 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import AppSidebar from "./AppSidebar";
 import { dumiOfficeConfig } from "@/dumi-office.config";
-import { LogOut, Menu, Search } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { LogOut, Search } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -24,14 +23,7 @@ const getInitialSidebarCollapsed = () => {
 
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const navigate = useNavigate();
-  const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getInitialSidebarCollapsed);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-
-  useEffect(() => {
-    setMobileNavOpen(false);
-  }, [location.pathname]);
-
   const currentDate = useMemo(
     () =>
       new Intl.DateTimeFormat("en-ZA", {
@@ -48,19 +40,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   };
 
   return (
-    <div className="min-h-screen min-w-0 max-w-full bg-background text-foreground">
-      {mobileNavOpen ? (
-        <button
-          type="button"
-          aria-label="Close navigation menu"
-          className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px] lg:hidden"
-          onClick={() => setMobileNavOpen(false)}
-        />
-      ) : null}
+    <div className="min-h-screen bg-background text-foreground">
       <AppSidebar
         collapsed={sidebarCollapsed}
-        mobileOpen={mobileNavOpen}
-        onMobileClose={() => setMobileNavOpen(false)}
         onToggle={() => {
           setSidebarCollapsed((c) => {
             const next = !c;
@@ -70,39 +52,28 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
         }}
       />
       <div
-        className={cn(
-          "relative flex min-h-screen w-full min-w-0 max-w-full flex-1 flex-col transition-[margin-left] duration-300",
-          sidebarCollapsed ? "lg:ml-16" : "lg:ml-64",
-        )}
+        className={`relative flex min-h-screen flex-1 flex-col transition-[margin-left] duration-300 ${
+          sidebarCollapsed ? "ml-16" : "ml-64"
+        }`}
       >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(214,176,92,0.08),transparent_22%),radial-gradient(circle_at_15%_15%,rgba(214,176,92,0.05),transparent_18%)]" />
         <header className="sticky top-0 z-40 border-b border-border/70 bg-background/70 backdrop-blur-2xl">
           <div className="flex flex-col gap-4 px-4 py-4 md:px-8 lg:px-10 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 items-center gap-3 md:gap-4">
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-10 w-10 shrink-0 border-border/70 lg:hidden"
-                aria-label="Open navigation menu"
-                onClick={() => setMobileNavOpen(true)}
-              >
-                <Menu size={18} />
-              </Button>
-              <div className="min-w-0">
+            <div className="flex items-center gap-4">
+              <div>
                 <p className="luxury-note">{dumiOfficeConfig.appName}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-3 text-sm">
                   <span className="font-medium text-foreground">{dumiOfficeConfig.brandTagline}</span>
-                  <span className="hidden h-1 w-1 shrink-0 rounded-full bg-primary/70 md:block" />
+                  <span className="hidden h-1 w-1 rounded-full bg-primary/70 md:block" />
                   <span className="text-muted-foreground">{currentDate}</span>
                 </div>
               </div>
             </div>
-            <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center">
-              <div className="flex min-w-0 w-full items-center gap-3 rounded-full border border-border/70 bg-card/65 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] md:min-w-[260px] md:max-w-md">
-                <Search size={15} className="shrink-0 text-primary" />
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <div className="flex min-w-[260px] items-center gap-3 rounded-full border border-border/70 bg-card/65 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                <Search size={15} className="text-primary" />
                 <input
-                  className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                  className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                   placeholder="Search clients, fragrances, collections"
                 />
               </div>
@@ -118,7 +89,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             </div>
           </div>
         </header>
-        <main className="relative z-10 min-w-0 flex-1 px-4 py-6 md:px-8 lg:px-10">{children}</main>
+        <main className="relative z-10 flex-1 px-4 py-6 md:px-8 lg:px-10">
+          {children}
+        </main>
       </div>
     </div>
   );
