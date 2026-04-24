@@ -512,32 +512,32 @@ const Vendors = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4 text-xs">
-          <div className="metric-card p-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4 text-xs">
+          <div className="metric-card">
             <span className="metric-label">Total vendors</span>
             <span className="metric-value">{metrics.total}</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">With contact details</span>
             <span className="metric-value">{metrics.withContact}</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Expense records</span>
             <span className="metric-value">{metrics.totalExpenseRecords}</span>
             <span className="metric-note">Ledger lines + DE orders without a ledger match</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Total spend</span>
             <span className="metric-value">R{metrics.totalSpend.toFixed(2)}</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Top vendor</span>
             <span className="metric-value">{metrics.topVendor === "-" ? "-" : metrics.topVendor}</span>
             <span className="metric-note">
               {metrics.topVendorSpend > 0 ? `R${metrics.topVendorSpend.toFixed(2)}` : "No spend yet"}
             </span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">DE orders linked</span>
             <span className="metric-value">{metrics.deOrdersLinked}</span>
             <span className="metric-note">Oils pro-formas → directory</span>
@@ -673,21 +673,21 @@ const Vendors = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-              <div className="metric-card p-3">
+              <div className="metric-card">
                 <span className="metric-label">Month to date</span>
                 <span className="metric-value">R{monthOnMonth.currentPartial.toFixed(2)}</span>
                 <span className="metric-note">
                   {monthOnMonth.thisMonthFrom} – {monthOnMonth.thisMonthTo}
                 </span>
               </div>
-              <div className="metric-card p-3">
+              <div className="metric-card">
                 <span className="metric-label">Same days last month</span>
                 <span className="metric-value">R{monthOnMonth.previousPartial.toFixed(2)}</span>
                 <span className="metric-note">
                   {monthOnMonth.prevMonthFrom} – {monthOnMonth.prevMonthTo}
                 </span>
               </div>
-              <div className="metric-card p-3">
+              <div className="metric-card">
                 <span className="metric-label">Change (MoM)</span>
                 <span
                   className={`metric-value ${

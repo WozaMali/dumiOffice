@@ -278,39 +278,39 @@ const Clients = () => {
             </>
           }
           aside={
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-3 py-2.5">
                 <p className="luxury-note">Active clients</p>
-                <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totals.total}</p>
+                <p className="mt-1.5 text-xl font-display font-semibold text-foreground">{totals.total}</p>
               </div>
-              <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <div className="rounded-2xl border border-border/60 bg-background/40 px-3 py-2.5">
                 <p className="luxury-note">Wholesale</p>
-                <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totals.wholesale}</p>
+                <p className="mt-1.5 text-xl font-display font-semibold text-foreground">{totals.wholesale}</p>
               </div>
             </div>
           }
         />
 
         {/* Top counters */}
-        <div className="mb-5 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+        <div className="mb-5 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
           <div className="metric-card">
             <span className="metric-label">Total clients</span>
-            <span className="metric-value text-[2.15rem]">{totals.total}</span>
+            <span className="metric-value">{totals.total}</span>
             <span className="metric-note">Across all channels</span>
           </div>
           <div className="metric-card">
             <span className="metric-label">Online</span>
-            <span className="metric-value text-[2.15rem]">{totals.online}</span>
+            <span className="metric-value">{totals.online}</span>
             <span className="metric-note">Storefront clients</span>
           </div>
           <div className="metric-card">
             <span className="metric-label">Walk-in / Pop-up</span>
-            <span className="metric-value text-[2.15rem]">{totals.walkIn}</span>
+            <span className="metric-value">{totals.walkIn}</span>
             <span className="metric-note">Boutique & events</span>
           </div>
           <div className="metric-card">
             <span className="metric-label">Wholesale</span>
-            <span className="metric-value text-[2.15rem]">{totals.wholesale}</span>
+            <span className="metric-value">{totals.wholesale}</span>
             <span className="metric-note">Stockists & partners</span>
           </div>
         </div>

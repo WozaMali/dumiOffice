@@ -462,10 +462,10 @@ const Inventory = () => {
 
         {/* Overview metrics */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs flex-1 min-w-0">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs flex-1 min-w-0">
             <div className="metric-card">
               <span className="metric-label">Total products</span>
-              <span className="metric-value flex items-center gap-2 text-[2.15rem]">
+              <span className="metric-value flex items-center gap-2">
                 <Package className="h-4 w-4 text-primary" />
                 {totalProducts}
               </span>
@@ -473,7 +473,7 @@ const Inventory = () => {
             </div>
             <div className="metric-card">
               <span className="metric-label">Total units</span>
-              <span className="metric-value flex items-center gap-2 text-[2.15rem]">
+              <span className="metric-value flex items-center gap-2">
                 <Target className="h-4 w-4 text-primary" />
                 {totalUnits}
               </span>
@@ -481,7 +481,7 @@ const Inventory = () => {
             </div>
             <div className="metric-card">
               <span className="metric-label">Low stock alerts</span>
-              <span className="metric-value flex items-center gap-2 text-[2.15rem]">
+              <span className="metric-value flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-primary" />
                 {lowStockCount}
               </span>

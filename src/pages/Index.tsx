@@ -201,7 +201,7 @@ const Index = () => {
         }
       />
 
-      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {kpis.map((card, index) => (
           <motion.div
             key={card.label}
@@ -213,7 +213,7 @@ const Index = () => {
             <div className="flex items-start justify-between">
               <div>
                 <p className="metric-label">{card.label}</p>
-                <p className="metric-value text-[2.15rem]">{card.value}</p>
+                <p className="metric-value">{card.value}</p>
                 <p className="metric-note">{card.helper}</p>
               </div>
               <div className="metric-icon">

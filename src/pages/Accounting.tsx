@@ -379,33 +379,33 @@ const Accounting = () => {
       {/* Overview metrics */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs flex-1 min-w-0">
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Total revenue</span>
-            <span className="metric-value flex items-center gap-2 text-[2rem]">
+            <span className="metric-value flex items-center gap-2">
               <Banknote className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.paidRevenue)}
             </span>
             <span className="metric-note">Paid in period</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Outstanding</span>
-            <span className="metric-value flex items-center gap-2 text-[2rem]">
+            <span className="metric-value flex items-center gap-2">
               <Target className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.outstanding)}
             </span>
             <span className="metric-note">Pending in period</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Ledger net</span>
-            <span className="metric-value flex items-center gap-2 text-[2rem]">
+            <span className="metric-value flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.manualIncome - metrics.manualExpense)}
             </span>
             <span className="metric-note">Income minus expense</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">P&amp;L (period)</span>
-            <span className={`metric-value flex items-center gap-2 text-[2rem] ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+            <span className={`metric-value flex items-center gap-2 ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
               <TrendingUp className="h-4 w-4" />
               {formatCurrency(metrics.pnlNet)}
             </span>
@@ -413,7 +413,7 @@ const Accounting = () => {
           </div>
           <div className="metric-card">
             <span className="metric-label">Stock value</span>
-            <span className="metric-value flex items-center gap-2 text-[2rem]">
+            <span className="metric-value flex items-center gap-2">
               <Package className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.stockValue)}
             </span>
@@ -522,15 +522,15 @@ const Accounting = () => {
 
       {accountingTab === "expenses" && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-xs">
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Total expenses</span>
             <span className="metric-value">{formatCurrency(expensesInRange.reduce((s, t) => s + Math.abs(t.amount), 0))}</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Profit after expenses</span>
             <span className={`metric-value ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.pnlNet)}</span>
           </div>
-          <div className="metric-card p-4">
+          <div className="metric-card">
             <span className="metric-label">Top vendor cost</span>
             <span className="metric-value">
               {expensesByVendor[0] ? `${expensesByVendor[0][0]} (${formatCurrency(expensesByVendor[0][1])})` : "-"}

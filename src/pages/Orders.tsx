@@ -1146,39 +1146,39 @@ Status: ${order.status} (${order.stage})`;
           </>
         }
         aside={
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-3 py-2.5">
               <p className="luxury-note">In motion</p>
-              <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totals.inProgress}</p>
+              <p className="mt-1.5 text-xl font-display font-semibold text-foreground">{totals.inProgress}</p>
             </div>
-            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-3 py-2.5">
               <p className="luxury-note">Delivered</p>
-              <p className="mt-2 text-3xl font-display font-semibold text-foreground">{totals.completed}</p>
+              <p className="mt-1.5 text-xl font-display font-semibold text-foreground">{totals.completed}</p>
             </div>
           </div>
         }
       />
 
       {/* Top counters */}
-      <div className="mb-5 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
         <div className="metric-card">
           <span className="metric-label">Total orders</span>
-          <span className="metric-value text-[2.15rem]">{totals.total}</span>
+          <span className="metric-value">{totals.total}</span>
           <span className="metric-note">This year</span>
         </div>
         <div className="metric-card">
           <span className="metric-label">Scheduled</span>
-          <span className="metric-value text-[2.15rem]">{totals.scheduled}</span>
+          <span className="metric-value">{totals.scheduled}</span>
           <span className="metric-note">Upcoming dispatches</span>
         </div>
         <div className="metric-card">
           <span className="metric-label">In progress</span>
-          <span className="metric-value text-[2.15rem]">{totals.inProgress}</span>
+          <span className="metric-value">{totals.inProgress}</span>
           <span className="metric-note">Active fulfilment</span>
         </div>
         <div className="metric-card">
           <span className="metric-label">Completed</span>
-          <span className="metric-value text-[2.15rem]">{totals.completed}</span>
+          <span className="metric-value">{totals.completed}</span>
           <span className="metric-note">Delivered with care</span>
         </div>
       </div>

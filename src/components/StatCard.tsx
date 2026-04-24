@@ -33,7 +33,7 @@ const StatCard = ({ title, value, change, changeType = "neutral", icon: Icon, in
           )}
         </div>
         <div className="metric-icon">
-          <Icon size={20} />
+          <Icon size={16} strokeWidth={2.25} />
         </div>
       </div>
     </motion.div>

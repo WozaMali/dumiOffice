@@ -199,7 +199,7 @@ const Marketing = () => {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-6">
         <StatCard title="Total Campaigns" value={`${metrics.count}`} icon={Mail} index={0} />
         <StatCard
           title="Avg Open Rate"
