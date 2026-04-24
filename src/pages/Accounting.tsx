@@ -5,12 +5,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ordersApi } from "@/lib/api/orders";
 import { productsApi } from "@/lib/api/products";
 import { accountingApi } from "@/lib/api/accounting";
+import { fragranceApi } from "@/lib/api/fragrance";
 import type {
   Order,
   Product,
@@ -83,6 +84,7 @@ const Accounting = () => {
   const [clearLedgerOpen, setClearLedgerOpen] = useState(false);
   const [clearLedgerScope, setClearLedgerScope] = useState<"range" | "all">("range");
   const [accountingTab, setAccountingTab] = useState<"ledger" | "expenses">("ledger");
+  const deSyncInFlightRef = useRef(false);
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -114,6 +116,59 @@ const Accounting = () => {
     queryKey: ["accountingTransactions"],
     queryFn: accountingApi.listTransactions,
   });
+  const { data: scentProformas = [] } = useQuery({
+    queryKey: ["scentProformas"],
+    queryFn: fragranceApi.listProformas,
+  });
+
+  useEffect(() => {
+    if (deSyncInFlightRef.current) return;
+    if (!scentProformas.length) return;
+
+    const normalizeRef = (value: string | null | undefined) => (value || "").trim().toLowerCase();
+    const isDeRef = (value: string | null | undefined) => /^de-\d{6}$/i.test((value || "").trim());
+
+    const existingRefs = new Set(
+      transactions
+        .map((t) => normalizeRef(t.reference))
+        .filter((r) => !!r),
+    );
+
+    const missingProformas = scentProformas.filter((pf) => {
+      const ref = normalizeRef(pf.reference);
+      if (!isDeRef(ref)) return false;
+      if (existingRefs.has(ref)) return false;
+      return true;
+    });
+
+    if (!missingProformas.length) return;
+
+    deSyncInFlightRef.current = true;
+    (async () => {
+      try {
+        for (const pf of missingProformas) {
+          const txDate = (pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString();
+          if (!txDate) continue;
+
+          await accountingApi.createTransaction({
+            date: txDate,
+            type: "expense",
+            amount: Number(pf.total ?? 0) || 0,
+            description: `DE Order ${pf.reference || ""} - ${pf.customer_name || "Unknown vendor"}`,
+            reference: pf.reference || undefined,
+            vendor: pf.customer_name || undefined,
+            campaign: "DE Orders",
+            created_by: "Admin",
+          });
+        }
+        queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+      } catch (err) {
+        console.error("Failed syncing DE proformas into accounting ledger", err);
+      } finally {
+        deSyncInFlightRef.current = false;
+      }
+    })();
+  }, [scentProformas, transactions, queryClient]);
 
   const refetchAll = () => {
     queryClient.invalidateQueries({ queryKey: ["orders", "accounting"] });

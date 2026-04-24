@@ -14,6 +14,7 @@ import {
   Building2,
   ChevronLeft,
   ChevronRight,
+  Megaphone,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { dumiOfficeConfig, type OfficeRouteId } from "@/dumi-office.config";
@@ -29,6 +30,7 @@ const iconByRouteId: Record<OfficeRouteId, ComponentType<{ size?: number }>> = {
   vendors: Building2,
   accounting: Calculator,
   expenses: Receipt,
+  marketing: Megaphone,
   content: Image,
   settings: Settings,
 };
@@ -85,7 +87,7 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
         collapsed ? "w-16" : "w-64"
       } transition-[width] duration-300`}
     >
-      <div className="border-b border-sidebar-border/80 p-4">
+      <div className="shrink-0 border-b border-sidebar-border/80 p-4">
         <div className="mb-4 flex items-center">
           {!collapsed && (
             <div className="flex flex-1 items-center justify-center">
@@ -103,7 +105,7 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
         {/* Removed extra promo block to keep sidebar copy minimal */}
       </div>
 
-      <nav className="flex-1 space-y-1.5 p-4">
+      <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden p-4">
         {dumiOfficeConfig.routes.map((route) => {
           const Icon = iconByRouteId[route.id];
           const isActive = location.pathname === route.path;
@@ -140,7 +142,7 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
         })}
       </nav>
 
-      <div className="border-t border-sidebar-border/80 p-4">
+      <div className="shrink-0 border-t border-sidebar-border/80 p-4">
         <div className="flex items-center gap-3 rounded-[1.25rem] border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full border border-primary/30 bg-primary/12">
             <span className="text-xs font-semibold tracking-[0.18em] text-primary">DE</span>

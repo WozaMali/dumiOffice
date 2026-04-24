@@ -100,6 +100,64 @@ export const fragranceApi = {
     };
   },
 
+  /** Replace all scent lines and extra lines for an existing pro-forma (used when saving edits). */
+  async replaceProformaLinesAndExtras(
+    proformaId: string,
+    lines: Omit<ScentProformaLine, "id" | "created_at" | "proforma_id">[],
+    extras: Omit<
+      ScentProformaExtraLine,
+      "id" | "created_at" | "proforma_id"
+    >[] = [],
+  ): Promise<{
+    lines: ScentProformaLine[];
+    extras: ScentProformaExtraLine[];
+  }> {
+    const { error: delLinesErr } = await supabase
+      .from("scent_proforma_lines")
+      .delete()
+      .eq("proforma_id", proformaId);
+    if (delLinesErr) throw delLinesErr;
+
+    const { error: delExtrasErr } = await supabase
+      .from("scent_proforma_extra_lines")
+      .delete()
+      .eq("proforma_id", proformaId);
+    if (delExtrasErr) throw delExtrasErr;
+
+    let insertedLines: ScentProformaLine[] = [];
+    if (lines.length) {
+      const payload = lines.map((l) => ({
+        ...l,
+        proforma_id: proformaId,
+      }));
+      const { data, error } = await supabase
+        .from("scent_proforma_lines")
+        .insert(payload)
+        .select();
+      if (error) throw error;
+      insertedLines = (data ?? []) as ScentProformaLine[];
+    }
+
+    let insertedExtras: ScentProformaExtraLine[] = [];
+    if (extras.length) {
+      const extrasPayload = extras.map((e) => ({
+        ...e,
+        proforma_id: proformaId,
+      }));
+      const { data, error } = await supabase
+        .from("scent_proforma_extra_lines")
+        .insert(extrasPayload)
+        .select();
+      if (error) throw error;
+      insertedExtras = (data ?? []) as ScentProformaExtraLine[];
+    }
+
+    return {
+      lines: insertedLines,
+      extras: insertedExtras,
+    };
+  },
+
   async listProformas(): Promise<ScentProforma[]> {
     const { data, error } = await supabase
       .from("scent_proformas")

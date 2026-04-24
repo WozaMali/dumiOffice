@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import PageHero from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
@@ -87,6 +87,13 @@ const OilsPage = () => {
   >([{ id: undefined, name: "", liters: "", price: "", qty: "" }]);
   const [selectedProformaId, setSelectedProformaId] = useState<string | null>(null);
   const [editingProformaId, setEditingProformaId] = useState<string | null>(null);
+  /** Prevents re-hydrating the editor multiple times for the same pro-forma id. */
+  const proformaEditHydratedForIdRef = useRef<string | null>(null);
+  /** After saving an edit, skip one pristine-catalog autofill per packaging table (avoids blowing up the form). */
+  const skipBottleCatalogFillOnceRef = useRef(false);
+  const skipPumpCatalogFillOnceRef = useRef(false);
+  const skipCapCatalogFillOnceRef = useRef(false);
+  const skipEthanolCatalogFillOnceRef = useRef(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [proformaDate, setProformaDate] = useState(
@@ -169,48 +176,69 @@ const OilsPage = () => {
   }, []);
 
   useEffect(() => {
-    if (!editingProformaId) return;
-    if (!selectedProformaLines || selectedProformaLines.length === 0) return;
+    if (!editingProformaId) {
+      proformaEditHydratedForIdRef.current = null;
+      return;
+    }
+    if (selectedProformaId !== editingProformaId) return;
+    if (isProformaLinesFetching || isProformaExtrasFetching) return;
+    if (proformaEditHydratedForIdRef.current === editingProformaId) return;
 
-    // 1) Restore scent rows
-    const mappedRows: ProFormaRow[] = selectedProformaLines.map(
-      (line: any, index: number) => {
-        const productIndex = scentProducts.findIndex(
-          (p) => p.id === line.scent_product_id,
-        );
-
-        return {
-          id: `pf-edit-${line.id ?? index}`,
-          productIndex: productIndex >= 0 ? productIndex : null,
-          qty1kg:
-            line.qty_1kg !== undefined && line.qty_1kg !== null
-              ? String(line.qty_1kg)
-              : "",
-          qty500g:
-            line.qty_500g !== undefined && line.qty_500g !== null
-              ? String(line.qty_500g)
-              : "",
-          qty200g:
-            line.qty_200g !== undefined && line.qty_200g !== null
-              ? String(line.qty_200g)
-              : "",
-          qty100g:
-            line.qty_100g !== undefined && line.qty_100g !== null
-              ? String(line.qty_100g)
-              : "",
-        };
-      },
-    );
-
-    if (mappedRows.length > 0) {
-      setProFormaRows(mappedRows);
+    const hasLines = selectedProformaLines.length > 0;
+    const hasExtras = selectedProformaExtras.length > 0;
+    if (!hasLines && !hasExtras) {
+      toast.error("This pro-forma has no line items to edit.");
+      setEditingProformaId(null);
+      return;
     }
 
-    // 2) Restore packaging / extras into the Pro-Forma editor
-    if (selectedProformaExtras && selectedProformaExtras.length > 0) {
-      const bottleExtras = selectedProformaExtras.filter(
-        (e) => e.kind === "bottle",
+    setBottles([
+      { id: undefined, name: "", ml: "", code: "", colour: "", shape: "", price: "", qty: "" },
+    ]);
+    setPrintFees([{ name: "", colour: "", type: "", price: "", qty: "" }]);
+    setPumps([
+      { id: undefined, name: "", ml: "", code: "", colour: "", price: "", qty: "" },
+    ]);
+    setCaps([
+      { id: undefined, name: "", ml: "", code: "", colour: "", price: "", qty: "" },
+    ]);
+    setEthanolRows([{ id: undefined, name: "", liters: "", price: "", qty: "" }]);
+
+    if (hasLines) {
+      const mappedRows: ProFormaRow[] = selectedProformaLines.map(
+        (line: any, index: number) => {
+          const productIndex = scentProducts.findIndex(
+            (p) => p.id === line.scent_product_id,
+          );
+          return {
+            id: `pf-edit-${line.id ?? index}`,
+            productIndex: productIndex >= 0 ? productIndex : null,
+            qty1kg:
+              line.qty_1kg !== undefined && line.qty_1kg !== null
+                ? String(line.qty_1kg)
+                : "",
+            qty500g:
+              line.qty_500g !== undefined && line.qty_500g !== null
+                ? String(line.qty_500g)
+                : "",
+            qty200g:
+              line.qty_200g !== undefined && line.qty_200g !== null
+                ? String(line.qty_200g)
+                : "",
+            qty100g:
+              line.qty_100g !== undefined && line.qty_100g !== null
+                ? String(line.qty_100g)
+                : "",
+          };
+        },
       );
+      setProFormaRows(mappedRows);
+    } else {
+      setProFormaRows([]);
+    }
+
+    if (hasExtras) {
+      const bottleExtras = selectedProformaExtras.filter((e) => e.kind === "bottle");
       if (bottleExtras.length) {
         setBottles(
           bottleExtras.map((e) => {
@@ -234,17 +262,13 @@ const OilsPage = () => {
         );
       }
 
-      const printExtras = selectedProformaExtras.filter(
-        (e) => e.kind === "print_fee",
-      );
+      const printExtras = selectedProformaExtras.filter((e) => e.kind === "print_fee");
       if (printExtras.length) {
         setPrintFees(
           printExtras.map((e) => {
             const qty = Number(e.qty ?? 0) || 0;
             const unitPrice =
-              qty && e.line_total != null
-                ? Number(e.line_total) / qty
-                : null;
+              qty && e.line_total != null ? Number(e.line_total) / qty : null;
             return {
               name: e.name,
               colour: "",
@@ -256,9 +280,7 @@ const OilsPage = () => {
         );
       }
 
-      const ethanolExtras = selectedProformaExtras.filter(
-        (e) => e.kind === "ethanol",
-      );
+      const ethanolExtras = selectedProformaExtras.filter((e) => e.kind === "ethanol");
       if (ethanolExtras.length) {
         setEthanolRows(
           ethanolExtras.map((e) => {
@@ -279,9 +301,7 @@ const OilsPage = () => {
         );
       }
 
-      const pumpExtras = selectedProformaExtras.filter(
-        (e) => e.kind === "pump",
-      );
+      const pumpExtras = selectedProformaExtras.filter((e) => e.kind === "pump");
       if (pumpExtras.length) {
         setPumps(
           pumpExtras.map((e) => {
@@ -328,22 +348,25 @@ const OilsPage = () => {
       }
     }
 
+    proformaEditHydratedForIdRef.current = editingProformaId;
     setActiveTab("pro-forma");
-    setEditingProformaId(null);
   }, [
     editingProformaId,
+    selectedProformaId,
     selectedProformaLines,
     selectedProformaExtras,
+    isProformaLinesFetching,
+    isProformaExtrasFetching,
     scentProducts,
     bottleProducts,
     pumpProducts,
     capProducts,
     ethanolProducts,
-    setActiveTab,
   ]);
 
   useEffect(() => {
     if (scentProducts.length === 0) return;
+    if (editingProformaId) return;
     // Keep Products tab as data-entry only; Pro-Forma uses listed products
     setProFormaRows((prev) =>
       prev.length > 0
@@ -359,11 +382,16 @@ const OilsPage = () => {
             },
           ],
     );
-  }, [scentProducts]);
+  }, [scentProducts, editingProformaId]);
 
   useEffect(() => {
     if (bottleProducts.length === 0) return;
+    if (editingProformaId) return;
     setBottles((prev) => {
+      if (skipBottleCatalogFillOnceRef.current) {
+        skipBottleCatalogFillOnceRef.current = false;
+        return prev;
+      }
       const isPristine =
         prev.length === 1 &&
         !prev[0].id &&
@@ -385,11 +413,16 @@ const OilsPage = () => {
         qty: "",
       }));
     });
-  }, [bottleProducts]);
+  }, [bottleProducts, editingProformaId]);
 
   useEffect(() => {
     if (pumpProducts.length === 0) return;
+    if (editingProformaId) return;
     setPumps((prev) => {
+      if (skipPumpCatalogFillOnceRef.current) {
+        skipPumpCatalogFillOnceRef.current = false;
+        return prev;
+      }
       const isPristine =
         prev.length === 1 &&
         !prev[0].id &&
@@ -409,11 +442,16 @@ const OilsPage = () => {
         qty: "",
       }));
     });
-  }, [pumpProducts]);
+  }, [pumpProducts, editingProformaId]);
 
   useEffect(() => {
     if (capProducts.length === 0) return;
+    if (editingProformaId) return;
     setCaps((prev) => {
+      if (skipCapCatalogFillOnceRef.current) {
+        skipCapCatalogFillOnceRef.current = false;
+        return prev;
+      }
       const isPristine =
         prev.length === 1 &&
         !prev[0].id &&
@@ -433,11 +471,16 @@ const OilsPage = () => {
         qty: "",
       }));
     });
-  }, [capProducts]);
+  }, [capProducts, editingProformaId]);
 
   useEffect(() => {
     if (ethanolProducts.length === 0) return;
+    if (editingProformaId) return;
     setEthanolRows((prev) => {
+      if (skipEthanolCatalogFillOnceRef.current) {
+        skipEthanolCatalogFillOnceRef.current = false;
+        return prev;
+      }
       const isPristine =
         prev.length === 1 &&
         !prev[0].id &&
@@ -454,7 +497,7 @@ const OilsPage = () => {
         qty: "",
       }));
     });
-  }, [ethanolProducts]);
+  }, [ethanolProducts, editingProformaId]);
 
   const saveScentProductsMutation = useMutation({
     mutationFn: async (rows: ScentRow[]) => {
@@ -906,38 +949,9 @@ const OilsPage = () => {
 
   const createProformaMutation = useMutation({
     mutationFn: async () => {
-      if (!proFormaRows.length) {
-        throw new Error("No pro-forma lines to create an order.");
-      }
       if (!selectedVendorId) {
         throw new Error("Select a vendor before creating a DE order.");
       }
-
-      // Next DE-000001 reference from highest existing DE-###### (set historical rows in Supabase if needed)
-      const existing = await fragranceApi.listProformas();
-      const prefix = "DE-";
-      let maxSeq = 0;
-      existing.forEach((pf) => {
-        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
-        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
-        const num = Number(numPart);
-        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
-      });
-      const nextSeq = maxSeq + 1;
-      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
-
-      const header = {
-        name: "Fragrance purchase",
-        customer_name: selectedVendorName,
-        vendor_id: selectedVendorId || null,
-        reference: nextRef,
-        status: "pending" as const,
-        proforma_date: proformaDate || null,
-        invoice_date: vendorInvoiceDate || null,
-        subtotal,
-        vat,
-        total,
-      };
 
       const toNumber = (value: string) => {
         if (!value) return 0;
@@ -979,10 +993,6 @@ const OilsPage = () => {
           };
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
-
-      if (!lines.length) {
-        throw new Error("All pro-forma lines are empty.");
-      }
 
       const parseQty = (value: string) => {
         if (!value) return 0;
@@ -1082,10 +1092,81 @@ const OilsPage = () => {
           .filter((l): l is NonNullable<typeof l> => l !== null),
       ];
 
-      return fragranceApi.createProforma(header, lines, extras);
+      if (!lines.length && !extras.length) {
+        throw new Error(
+          "Add at least one scent line with quantity, or at least one bottle, extra, ethanol, pump, or cap line with an amount.",
+        );
+      }
+
+      if (editingProformaId) {
+        const header = await fragranceApi.updateProforma(editingProformaId, {
+          customer_name: selectedVendorName,
+          vendor_id: selectedVendorId || null,
+          proforma_date: proformaDate || null,
+          invoice_date: vendorInvoiceDate || null,
+          subtotal,
+          vat,
+          total,
+        });
+        const { lines: outLines, extras: outExtras } =
+          await fragranceApi.replaceProformaLinesAndExtras(
+            editingProformaId,
+            lines,
+            extras,
+          );
+        return {
+          mode: "update" as const,
+          header,
+          lines: outLines,
+          extras: outExtras,
+        };
+      }
+
+      const existing = await fragranceApi.listProformas();
+      const prefix = "DE-";
+      let maxSeq = 0;
+      existing.forEach((pf) => {
+        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
+        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
+        const num = Number(numPart);
+        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+      });
+      const nextSeq = maxSeq + 1;
+      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+
+      const header = {
+        name: "Fragrance purchase",
+        customer_name: selectedVendorName,
+        vendor_id: selectedVendorId || null,
+        reference: nextRef,
+        status: "pending" as const,
+        proforma_date: proformaDate || null,
+        invoice_date: vendorInvoiceDate || null,
+        subtotal,
+        vat,
+        total,
+      };
+
+      const created = await fragranceApi.createProforma(header, lines, extras);
+      return { mode: "create" as const, ...created };
     },
     onSuccess: async (result) => {
+      if (result.mode === "update") {
+        toast.success("Pro-forma saved");
+        skipBottleCatalogFillOnceRef.current = true;
+        skipPumpCatalogFillOnceRef.current = true;
+        skipCapCatalogFillOnceRef.current = true;
+        skipEthanolCatalogFillOnceRef.current = true;
+        setEditingProformaId(null);
+        proformaEditHydratedForIdRef.current = null;
+        queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
+        queryClient.invalidateQueries({ queryKey: ["scentProformaLines"] });
+        queryClient.invalidateQueries({ queryKey: ["scentProformaExtras"] });
+        return;
+      }
+
       toast.success("Order created from pro-forma");
+      setEditingProformaId(null);
       const trimmedVendor = selectedVendorName.trim();
       if (trimmedVendor && result?.header?.reference) {
         try {
@@ -1124,10 +1205,35 @@ const OilsPage = () => {
   });
 
   const deleteProformaMutation = useMutation({
-    mutationFn: (id: string) => fragranceApi.deleteProforma(id),
-    onSuccess: () => {
+    mutationFn: async ({ id, reference }: { id: string; reference?: string | null }) => {
+      await fragranceApi.deleteProforma(id);
+
+      const normalizedRef = (reference || "").trim().toLowerCase();
+      if (!normalizedRef) return { deletedLinkedExpenses: 0 };
+
+      const txns = await accountingApi.listTransactions();
+      const linked = txns.filter((t) => {
+        const ref = (t.reference || "").trim().toLowerCase();
+        const desc = (t.description || "").toLowerCase();
+        return ref === normalizedRef || desc.includes(normalizedRef);
+      });
+
+      for (const txn of linked) {
+        await accountingApi.deleteTransaction(txn.id);
+      }
+
+      return { deletedLinkedExpenses: linked.length };
+    },
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
-      toast.success("Pro-forma deleted");
+      queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+      if ((result?.deletedLinkedExpenses ?? 0) > 0) {
+        toast.success(
+          `Pro-forma deleted (${result.deletedLinkedExpenses} linked expense record(s) removed)`,
+        );
+      } else {
+        toast.success("Pro-forma deleted");
+      }
       setSelectedProformaId(null);
     },
     onError: (err: any) => {
@@ -3554,7 +3660,7 @@ const OilsPage = () => {
             Summary
           </h2>
           <p className="text-xs text-muted-foreground">
-            Subtotal of all scents, bottles, pumps and caps with VAT @ 15%.
+            Subtotal of scents, bottles, pumps, caps, ethanol, and extras, with VAT @ 15%.
           </p>
         </div>
         <div className="px-4 py-3 space-y-2 text-sm">
@@ -3617,7 +3723,13 @@ const OilsPage = () => {
             className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed"
             disabled={!total || createProformaMutation.isPending}
           >
-            {createProformaMutation.isPending ? "Creating order…" : "Create order"}
+            {createProformaMutation.isPending
+              ? editingProformaId
+                ? "Saving…"
+                : "Creating order…"
+              : editingProformaId
+                ? "Save pro-forma"
+                : "Create order"}
           </button>
         </div>
       </div>
@@ -5110,7 +5222,10 @@ const OilsPage = () => {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              deleteProformaMutation.mutate(pf.id);
+                              deleteProformaMutation.mutate({
+                                id: pf.id,
+                                reference: pf.reference,
+                              });
                             }}
                             className="inline-flex items-center gap-1 rounded-md border border-destructive/60 px-2 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10"
                             disabled={deleteProformaMutation.isPending}

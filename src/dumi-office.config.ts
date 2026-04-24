@@ -8,6 +8,7 @@ export type OfficeRouteId =
   | "vendors"
   | "accounting"
   | "expenses"
+  | "marketing"
   | "content"
   | "settings";
 
@@ -110,6 +111,14 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       description:
         "Track and manage business expenses with clear categories for house bookkeeping.",
       primaryTables: ["accounting_transactions", "accounting_categories"],
+    },
+    {
+      id: "marketing",
+      label: "Marketing",
+      path: "/marketing",
+      description:
+        "Plan campaigns, track touchpoints, and keep fragrance launches aligned with the house voice.",
+      primaryTables: [],
     },
     {
       id: "content",

@@ -31,6 +31,7 @@ import { vendorsApi } from "@/lib/api/vendors";
 import { accountingApi } from "@/lib/api/accounting";
 import { fragranceApi } from "@/lib/api/fragrance";
 import type {
+  AccountingAttachment,
   AccountingCategory,
   AccountingTransaction,
   ScentProforma,
@@ -60,6 +61,24 @@ const normalizeVendorKey = (s: string | null | undefined) =>
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
+
+/** Normalized DE-###### reference for comparisons. */
+const normalizeDeRef = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+
+const isDeSequenceReference = (s: string | null | undefined) =>
+  /^de-\d+$/i.test((s ?? "").trim());
+
+/** DE-###### tokens in free text (e.g. expense descriptions), lowercased. */
+const collectDeRefsInText = (s: string | null | undefined): Set<string> => {
+  const out = new Set<string>();
+  if (!s) return out;
+  const re = /de-\d+/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) != null) {
+    out.add(m[0].toLowerCase());
+  }
+  return out;
+};
 
 const Vendors = () => {
   const queryClient = useQueryClient();
@@ -91,7 +110,7 @@ const Vendors = () => {
   });
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
   const [evidenceProforma, setEvidenceProforma] = useState<ScentProforma | null>(null);
-  const [expenseReferenceFilter, setExpenseReferenceFilter] = useState("DE-000001");
+  const [expenseReferenceFilter, setExpenseReferenceFilter] = useState("");
   const [expenseVendorFilter, setExpenseVendorFilter] = useState("");
 
   useEffect(() => {
@@ -116,6 +135,21 @@ const Vendors = () => {
   const { data: transactions = [] } = useQuery<AccountingTransaction[]>({
     queryKey: ["accountingTransactions"],
     queryFn: accountingApi.listTransactions,
+  });
+  const { data: attachmentsByTransactionId = {} } = useQuery<
+    Record<string, AccountingAttachment[]>
+  >({
+    queryKey: ["accountingAttachmentsByTransaction", transactions.map((t) => t.id).join(",")],
+    enabled: transactions.length > 0,
+    queryFn: async () => {
+      const pairs = await Promise.all(
+        transactions.map(async (t) => {
+          const attachments = await accountingApi.listAttachments(t.id);
+          return [t.id, attachments] as const;
+        }),
+      );
+      return Object.fromEntries(pairs);
+    },
   });
   const { data: categories = [] } = useQuery<AccountingCategory[]>({
     queryKey: ["accountingCategories"],
@@ -197,7 +231,78 @@ const Vendors = () => {
     [transactions],
   );
 
-  const evidenceLinkedExpenses = useMemo(() => {
+  /** One row per DE reference (latest); keeps non–DE-reference pro-formas by id. */
+  const proformasDedupedByRef = useMemo(() => {
+    const byKey = new Map<string, ScentProforma>();
+    const sorted = [...scentProformas].sort((a, b) =>
+      (b.created_at || "").localeCompare(a.created_at || ""),
+    );
+    sorted.forEach((pf) => {
+      const r = normalizeDeRef(pf.reference);
+      const key = r && isDeSequenceReference(pf.reference) ? `de:${r}` : `id:${pf.id}`;
+      if (!byKey.has(key)) byKey.set(key, pf);
+    });
+    return Array.from(byKey.values()).sort((a, b) =>
+      (b.created_at || "").localeCompare(a.created_at || ""),
+    );
+  }, [scentProformas]);
+
+  const proformaRefSet = useMemo(() => {
+    const s = new Set<string>();
+    proformasDedupedByRef.forEach((pf) => {
+      const r = normalizeDeRef(pf.reference);
+      if (r && isDeSequenceReference(pf.reference)) s.add(r);
+    });
+    return s;
+  }, [proformasDedupedByRef]);
+
+  /**
+   * Ledger lines that are not auto-generated twins of an Oils order.
+   * DE expenses that match Order History (scent_proformas) use the pro-forma row as canonical.
+   */
+  const ledgerExpensesWithoutProformaTwin = useMemo(
+    () =>
+      expenseRecords.filter((t) => {
+        const r = normalizeDeRef(t.reference);
+        if (r && isDeSequenceReference(t.reference) && proformaRefSet.has(r)) {
+          return false;
+        }
+        if (r && isDeSequenceReference(t.reference)) {
+          const campaign = (t.campaign || "").trim().toLowerCase();
+          if (campaign === "de orders") {
+            return false;
+          }
+        }
+        for (const dr of collectDeRefsInText(t.description)) {
+          if (proformaRefSet.has(dr)) return false;
+        }
+        return true;
+      }),
+    [expenseRecords, proformaRefSet],
+  );
+
+  /** Collapse duplicate accounting lines for the same DE reference (keep newest). */
+  const ledgerExpensesForVendorViews = useMemo(() => {
+    const byDeRef = new Map<string, AccountingTransaction>();
+    const rest: AccountingTransaction[] = [];
+    for (const t of ledgerExpensesWithoutProformaTwin) {
+      const r = (t.reference || "").trim();
+      if (!isDeSequenceReference(r)) {
+        rest.push(t);
+        continue;
+      }
+      const key = r.toLowerCase();
+      const prev = byDeRef.get(key);
+      if (!prev || (t.created_at || "").localeCompare(prev.created_at || "") > 0) {
+        byDeRef.set(key, t);
+      }
+    }
+    return [...rest, ...byDeRef.values()].sort((a, b) =>
+      `${b.date} ${b.created_at}`.localeCompare(`${a.date} ${a.created_at}`),
+    );
+  }, [ledgerExpensesWithoutProformaTwin]);
+
+  const evidenceLinkedTransactions = useMemo(() => {
     if (!evidenceProforma) return [];
     const ref = (evidenceProforma.reference || "").trim();
     if (!ref) return [];
@@ -207,6 +312,17 @@ const Vendors = () => {
       return false;
     });
   }, [evidenceProforma, expenseRecords]);
+
+  const evidenceLinkedAttachments = useMemo(() => {
+    if (!evidenceLinkedTransactions.length) return [];
+    return evidenceLinkedTransactions.flatMap((t) => {
+      const attachments = attachmentsByTransactionId[t.id] ?? [];
+      return attachments.map((attachment) => ({
+        transaction: t,
+        attachment,
+      }));
+    });
+  }, [evidenceLinkedTransactions, attachmentsByTransactionId]);
 
   const vendorByNormalizedName = useMemo(() => {
     const m = new Map<string, Vendor>();
@@ -219,7 +335,7 @@ const Vendors = () => {
 
   const expenseStatsByVendorId = useMemo(() => {
     const acc: Record<string, { count: number; total: number }> = {};
-    expenseRecords.forEach((t) => {
+    ledgerExpensesForVendorViews.forEach((t) => {
       const v = vendorByNormalizedName.get(normalizeVendorKey(t.vendor));
       if (!v) return;
       if (!acc[v.id]) acc[v.id] = { count: 0, total: 0 };
@@ -227,22 +343,22 @@ const Vendors = () => {
       acc[v.id].total += Math.abs(t.amount);
     });
     return acc;
-  }, [expenseRecords, vendorByNormalizedName]);
+  }, [ledgerExpensesForVendorViews, vendorByNormalizedName]);
 
   const unmatchedExpenseLineCount = useMemo(
     () =>
-      expenseRecords.filter((t) => {
+      ledgerExpensesForVendorViews.filter((t) => {
         const key = normalizeVendorKey(t.vendor);
         if (!key) return true;
         return !vendorByNormalizedName.has(key);
       }).length,
-    [expenseRecords, vendorByNormalizedName],
+    [ledgerExpensesForVendorViews, vendorByNormalizedName],
   );
 
   const filteredExpenseRecords = useMemo(() => {
     const q = expenseReferenceFilter.trim().toLowerCase();
     const v = expenseVendorFilter.trim().toLowerCase();
-    let rows = expenseRecords;
+    let rows = ledgerExpensesForVendorViews;
     if (q) {
       rows = rows.filter((t) => {
         const ref = (t.reference || "").trim().toLowerCase();
@@ -254,7 +370,7 @@ const Vendors = () => {
       rows = rows.filter((t) => (t.vendor || "").trim().toLowerCase() === v);
     }
     return rows;
-  }, [expenseRecords, expenseReferenceFilter, expenseVendorFilter]);
+  }, [ledgerExpensesForVendorViews, expenseReferenceFilter, expenseVendorFilter]);
 
   const ledgerCoversProformaReference = (pfRef: string | null | undefined) => {
     const r = (pfRef || "").trim().toLowerCase();
@@ -265,18 +381,6 @@ const Vendors = () => {
       return false;
     });
   };
-
-  /** DE orders that match the reference filter but have no matching accounting expense line yet. */
-  const proformaFallbackExpenseRows = useMemo(() => {
-    const q = expenseReferenceFilter.trim().toLowerCase();
-    if (!q) return [];
-    return scentProformas.filter((pf) => {
-      const pr = (pf.reference || "").trim().toLowerCase();
-      if (!pr) return false;
-      if (!(pr === q || pr.includes(q) || q.includes(pr))) return false;
-      return !ledgerCoversProformaReference(pf.reference);
-    });
-  }, [scentProformas, expenseReferenceFilter, expenseRecords]);
 
   const resolveDirectoryVendorForProforma = (pf: ScentProforma): Vendor | null => {
     if (pf.vendor_id) {
@@ -289,9 +393,36 @@ const Vendors = () => {
     return null;
   };
 
+  /** Oils order-history rows for the Expenses tab (same source as /oils Fragrance order history). */
+  const filteredProformaOrdersForExpensesTab = useMemo(() => {
+    const q = expenseReferenceFilter.trim().toLowerCase();
+    const v = expenseVendorFilter.trim().toLowerCase();
+    return proformasDedupedByRef.filter((pf) => {
+      const pr = normalizeDeRef(pf.reference);
+      const supplier = (pf.customer_name || "").trim().toLowerCase();
+      const dir = resolveDirectoryVendorForProforma(pf);
+      const dirName = (dir?.name || "").trim().toLowerCase();
+      if (!q && !v) return true;
+      if (q) {
+        const refMatch = pr === q || pr.includes(q) || q.includes(pr);
+        if (!refMatch) return false;
+      }
+      if (v) {
+        if (supplier !== v && dirName !== v) return false;
+      }
+      return true;
+    });
+  }, [
+    proformasDedupedByRef,
+    expenseReferenceFilter,
+    expenseVendorFilter,
+    vendors,
+    vendorByNormalizedName,
+  ]);
+
   const proformaStatsByVendorId = useMemo(() => {
     const acc: Record<string, { count: number; total: number }> = {};
-    scentProformas.forEach((pf) => {
+    proformasDedupedByRef.forEach((pf) => {
       const v = resolveDirectoryVendorForProforma(pf);
       if (!v) return;
       if (!acc[v.id]) acc[v.id] = { count: 0, total: 0 };
@@ -299,10 +430,10 @@ const Vendors = () => {
       acc[v.id].total += Number(pf.total ?? 0) || 0;
     });
     return acc;
-  }, [scentProformas, vendors, vendorByNormalizedName]);
+  }, [proformasDedupedByRef, vendors, vendorByNormalizedName]);
 
   const proformaSpendInRange = useMemo(() => {
-    const inRange = scentProformas.filter((pf) => {
+    const inRange = proformasDedupedByRef.filter((pf) => {
       const d = (pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString();
       return d >= summaryDateFrom && d <= summaryDateTo;
     });
@@ -326,10 +457,10 @@ const Vendors = () => {
       .sort((a, b) => b.total - a.total);
     const rangeTotal = inRange.reduce((s, p) => s + (Number(p.total) || 0), 0);
     return { rows, rangeTotal, inRangeCount: inRange.length };
-  }, [scentProformas, summaryDateFrom, summaryDateTo, vendors, vendorByNormalizedName]);
+  }, [proformasDedupedByRef, summaryDateFrom, summaryDateTo, vendors, vendorByNormalizedName]);
 
   const spendSummary = useMemo(() => {
-    const inRange = expenseRecords.filter(
+    const inRange = ledgerExpensesForVendorViews.filter(
       (t) => t.date >= summaryDateFrom && t.date <= summaryDateTo,
     );
     const byVendor = inRange.reduce<Record<string, { total: number; count: number }>>((acc, row) => {
@@ -344,7 +475,7 @@ const Vendors = () => {
       .sort((a, b) => b.total - a.total);
     const rangeTotal = inRange.reduce((s, t) => s + Math.abs(t.amount), 0);
     return { rows, rangeTotal, inRangeCount: inRange.length };
-  }, [expenseRecords, summaryDateFrom, summaryDateTo]);
+  }, [ledgerExpensesForVendorViews, summaryDateFrom, summaryDateTo]);
 
   const monthOnMonth = useMemo(() => {
     const now = new Date();
@@ -364,7 +495,7 @@ const Vendors = () => {
     const prevMonthTo = toLocalYmd(new Date(pYear, pMonth, compareDay));
 
     const sumIn = (from: string, to: string) =>
-      expenseRecords
+      ledgerExpensesForVendorViews
         .filter((t) => t.date >= from && t.date <= to)
         .reduce((s, t) => s + Math.abs(t.amount), 0);
 
@@ -383,35 +514,25 @@ const Vendors = () => {
       delta,
       pct,
     };
-  }, [expenseRecords]);
+  }, [ledgerExpensesForVendorViews]);
 
   const metrics = useMemo(() => {
     const withContact = vendors.filter((v) => !!(v.contact_name || v.contact_phone || v.email)).length;
-    const byVendor = expenseRecords.reduce<Record<string, number>>((acc, row) => {
+    const byVendor = ledgerExpensesForVendorViews.reduce<Record<string, number>>((acc, row) => {
       const key = row.vendor || "Unassigned";
       acc[key] = (acc[key] ?? 0) + Math.abs(row.amount);
       return acc;
     }, {});
     const topVendorFromExpensesOnly = Object.entries(byVendor).sort((a, b) => b[1] - a[1])[0];
 
-    const linkedProformas = scentProformas.filter((pf) => {
+    const linkedProformas = proformasDedupedByRef.filter((pf) => {
       if (pf.vendor_id && vendors.some((v) => v.id === pf.vendor_id)) return true;
       if (pf.customer_name && vendorByNormalizedName.has(normalizeVendorKey(pf.customer_name)))
         return true;
       return false;
     });
-    const accountingSpend = expenseRecords.reduce((sum, row) => sum + Math.abs(row.amount), 0);
-    const expenseRefs = new Set(
-      expenseRecords.map((t) => (t.reference || "").trim()).filter(Boolean),
-    );
-    const proformaSpendNotAlreadyInLedger = linkedProformas
-      .filter((pf) => {
-        const ref = (pf.reference || "").trim();
-        if (!ref) return true;
-        return !expenseRefs.has(ref);
-      })
-      .reduce((s, p) => s + (Number(p.total) || 0), 0);
-    const totalSpend = accountingSpend + proformaSpendNotAlreadyInLedger;
+    /** Same scope as Vendor spend summary: ledger lines in range + DE order totals in range (no double count). */
+    const totalSpend = spendSummary.rangeTotal + proformaSpendInRange.rangeTotal;
 
     let topVendorName = "-";
     let topVendorSpendAmt = 0;
@@ -429,13 +550,13 @@ const Vendors = () => {
       topVendorSpendAmt = topVendorFromExpensesOnly[1];
     }
 
-    const proformaEvidenceWithoutLedger = scentProformas.filter((pf) => {
+    const proformaEvidenceWithoutLedger = proformasDedupedByRef.filter((pf) => {
       const ref = (pf.reference || "").trim();
       if (!ref) return false;
       return !ledgerCoversProformaReference(pf.reference);
     });
     const totalExpenseRecords =
-      expenseRecords.length + proformaEvidenceWithoutLedger.length;
+      ledgerExpensesForVendorViews.length + proformaEvidenceWithoutLedger.length;
 
     return {
       total: vendors.length,
@@ -448,8 +569,8 @@ const Vendors = () => {
     };
   }, [
     vendors,
-    expenseRecords,
-    scentProformas,
+    ledgerExpensesForVendorViews,
+    proformasDedupedByRef,
     vendorByNormalizedName,
     expenseStatsByVendorId,
     proformaStatsByVendorId,
@@ -906,8 +1027,10 @@ const Vendors = () => {
                   aria-label="Filter expenses by reference"
                 />
                 <span className="text-muted-foreground tabular-nums">
-                  {filteredExpenseRecords.length + proformaFallbackExpenseRows.length} shown
-                  {expenseRecords.length > 0 ? ` · ${expenseRecords.length} in ledger` : ""}
+                  {filteredExpenseRecords.length + filteredProformaOrdersForExpensesTab.length} shown
+                  {ledgerExpensesForVendorViews.length > 0
+                    ? ` · ${ledgerExpensesForVendorViews.length} ledger line(s) (DE orders use Oils history)`
+                    : ""}
                 </span>
                 <Button
                   type="button"
@@ -946,21 +1069,22 @@ const Vendors = () => {
                 </tr>
               </thead>
               <tbody>
-                {expenseRecords.length === 0 &&
-                proformaFallbackExpenseRows.length === 0 &&
-                !expenseReferenceFilter.trim() ? (
+                {ledgerExpensesForVendorViews.length === 0 &&
+                proformasDedupedByRef.length === 0 &&
+                !expenseReferenceFilter.trim() &&
+                !expenseVendorFilter.trim() ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                      No accounting expense records yet. Create a DE order in Oils (a ledger line is
-                      added when the order is created if accounting is available), or filter by reference
-                      to view the matching pro-forma row.
+                      No expenses yet. Create DE orders under Oils → Fragrance order history, or add
+                      non-DE expenses in Accounting / Expenses.
                     </td>
                   </tr>
-                ) : filteredExpenseRecords.length === 0 && proformaFallbackExpenseRows.length === 0 ? (
+                ) : filteredExpenseRecords.length === 0 &&
+                  filteredProformaOrdersForExpensesTab.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                      No ledger lines and no DE order match reference &quot;
-                      {expenseReferenceFilter.trim()}&quot;. Try another reference or clear the filter.
+                      Nothing matches this reference or vendor filter. Try clearing filters or adjust
+                      the reference.
                     </td>
                   </tr>
                 ) : (
@@ -1003,16 +1127,17 @@ const Vendors = () => {
                         </tr>
                       );
                     })}
-                    {proformaFallbackExpenseRows.map((pf) => {
+                    {filteredProformaOrdersForExpensesTab.map((pf) => {
                       const dir = resolveDirectoryVendorForProforma(pf);
                       const dateStr = (
                         pf.proforma_date ||
                         pf.created_at?.slice(0, 10) ||
                         ""
                       ).toString();
+                      const hasLedgerTwin = ledgerCoversProformaReference(pf.reference);
                       return (
                         <tr
-                          key={`pf-expense-fallback-${pf.id}`}
+                          key={`pf-order-history-${pf.id}`}
                           className="border-b border-border/20 bg-muted/25"
                         >
                           <td className="px-4 py-3 text-muted-foreground">{dateStr || "—"}</td>
@@ -1027,7 +1152,9 @@ const Vendors = () => {
                             )}
                           </td>
                           <td className="px-4 py-3 text-muted-foreground">
-                            Fragrance DE order (Oils) — no matching ledger expense line yet.
+                            {hasLedgerTwin
+                              ? "Fragrance DE order (Oils order history — canonical; duplicate ledger lines hidden)."
+                              : "Fragrance DE order (Oils order history). No matching ledger line yet."}
                           </td>
                           <td className="px-4 py-3">
                             <Badge variant="secondary" className="font-normal">
@@ -1078,14 +1205,14 @@ const Vendors = () => {
                 </tr>
               </thead>
               <tbody>
-                {scentProformas.length === 0 ? (
+                {proformasDedupedByRef.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No pro-formas yet. Create orders under Oils → Pro-forma.
                     </td>
                   </tr>
                 ) : (
-                  [...scentProformas]
+                  [...proformasDedupedByRef]
                     .sort((a, b) => b.created_at.localeCompare(a.created_at))
                     .map((pf) => {
                       const dir = resolveDirectoryVendorForProforma(pf);
@@ -1095,12 +1222,18 @@ const Vendors = () => {
                         ""
                       ).toString();
                       const refTrim = (pf.reference || "").trim();
-                      const linkedCount = refTrim
+                      const linkedMatches = refTrim
                         ? expenseRecords.filter(
                             (t) =>
                               (t.reference || "").trim() === refTrim ||
                               (t.description || "").includes(refTrim),
-                          ).length
+                          )
+                        : [];
+                      const linkedCount = refTrim
+                        ? linkedMatches.reduce(
+                            (sum, t) => sum + (attachmentsByTransactionId[t.id]?.length ?? 0),
+                            0,
+                          )
                         : 0;
                       return (
                         <tr key={pf.id} className="border-b border-border/20">
@@ -1133,10 +1266,10 @@ const Vendors = () => {
                               size="sm"
                               className="h-8 gap-1 text-xs"
                               onClick={() => setEvidenceProforma(pf)}
-                              title="Show accounting expenses linked to this DE order"
+                              title="Show invoice/receipt attachments linked to this DE order"
                             >
                               <FileText className="h-3.5 w-3.5" />
-                              {linkedCount > 0 ? `Expenses (${linkedCount})` : "Expenses"}
+                              {linkedCount > 0 ? `Attachments (${linkedCount})` : "Attachments"}
                             </Button>
                           </td>
                         </tr>
@@ -1157,7 +1290,7 @@ const Vendors = () => {
       >
         <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Expenses for this DE order</DialogTitle>
+            <DialogTitle>Attachments for this DE order</DialogTitle>
             <DialogDescription>
               {evidenceProforma ? (
                 <>
@@ -1175,41 +1308,48 @@ const Vendors = () => {
           </DialogHeader>
           {!evidenceProforma ? null : !(evidenceProforma.reference || "").trim() ? (
             <p className="text-sm text-muted-foreground">
-              This order has no reference yet, so ledger lines cannot be matched automatically. Add a
-              reference in Oils, then use the same value on accounting expenses if needed.
+              This order has no reference yet, so attachments cannot be matched automatically. Add a
+              reference in Oils, then use the same value on Accounting entries.
             </p>
-          ) : evidenceLinkedExpenses.length === 0 ? (
+          ) : evidenceLinkedTransactions.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No expense records found with this reference on the transaction or in the description
+              No accounting records found with this reference on the transaction or in the description
               (Oils saves lines like &quot;DE Order DE-000001 — …&quot;).
+            </p>
+          ) : evidenceLinkedAttachments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Accounting record(s) exist for this DE reference, but no receipt/invoice attachments
+              are uploaded yet. Open Accounting and click <span className="font-medium">Attach</span>{" "}
+              on the matching REF row.
             </p>
           ) : (
             <div className="overflow-auto rounded-md border border-border/50 text-xs min-h-0 flex-1">
               <table className="min-w-full">
                 <thead>
                   <tr className="border-b border-border/40 bg-muted/30">
-                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">Uploaded</th>
+                    <th className="px-3 py-2 text-left">File</th>
+                    <th className="px-3 py-2 text-left">Transaction date</th>
                     <th className="px-3 py-2 text-left">Vendor</th>
-                    <th className="px-3 py-2 text-left">Description</th>
-                    <th className="px-3 py-2 text-left">Category</th>
                     <th className="px-3 py-2 text-left">Reference</th>
-                    <th className="px-3 py-2 text-right">Amount</th>
+                    <th className="px-3 py-2 text-left">Description</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {evidenceLinkedExpenses.map((t) => {
-                    const cat = categories.find((c) => c.id === t.category_id);
+                  {evidenceLinkedAttachments.map(({ transaction, attachment }) => {
                     return (
-                      <tr key={t.id} className="border-b border-border/20">
-                        <td className="px-3 py-2 text-muted-foreground">{t.date}</td>
-                        <td className="px-3 py-2">{t.vendor || "—"}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{t.description || "—"}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{cat?.name || "—"}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">
-                          {t.reference || "—"}
+                      <tr key={attachment.id} className="border-b border-border/20">
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {attachment.uploaded_at?.slice(0, 10) || "—"}
                         </td>
-                        <td className="px-3 py-2 text-right font-medium">
-                          R{Math.abs(t.amount).toFixed(2)}
+                        <td className="px-3 py-2">{attachment.file_name || attachment.file_url}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{transaction.date}</td>
+                        <td className="px-3 py-2">{transaction.vendor || "—"}</td>
+                        <td className="px-3 py-2 font-mono text-muted-foreground">
+                          {transaction.reference || "—"}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {transaction.description || "—"}
                         </td>
                       </tr>
                     );
