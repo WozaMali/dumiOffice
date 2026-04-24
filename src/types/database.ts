@@ -276,6 +276,26 @@ export interface AccountingAttachment {
   uploaded_at: string;
 }
 
+export interface Vendor {
+  id: string;
+  name: string;
+  vat_number?: string;
+  company_registration?: string;
+  address?: string;
+  street_address?: string;
+  suburb?: string;
+  city?: string;
+  province?: string;
+  country?: string;
+  postal_code?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  email?: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // Fragrance sourcing tables
 
 export interface ScentProduct {
@@ -300,7 +320,10 @@ export interface ScentProforma {
   id: string;
   name: string;
   customer_name?: string;
+  vendor_id?: string;
   reference?: string;
+  proforma_date?: string;
+  invoice_date?: string;
   valid_until?: string;
   subtotal: number;
   vat: number;

@@ -5,6 +5,7 @@ export type OfficeRouteId =
   | "clients"
   | "inventory"
   | "oils"
+  | "vendors"
   | "accounting"
   | "expenses"
   | "content"
@@ -85,6 +86,14 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       description:
         "Manage DE orders: sourcing procurement, packaging components, ethanol, and pro-forma purchasing.",
       primaryTables: ["oils", "containers", "oil_prices"],
+    },
+    {
+      id: "vendors",
+      label: "Vendors",
+      path: "/vendors",
+      description:
+        "Maintain supplier records used in DE purchasing and expense tracking.",
+      primaryTables: ["vendors", "scent_proformas", "accounting_transactions"],
     },
     {
       id: "accounting",

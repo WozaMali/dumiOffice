@@ -195,6 +195,24 @@ const Orders = () => {
     queryFn: () => (selectedOrder ? orderHistoryApi.listByOrderId(selectedOrder.id) : Promise.resolve([])),
     enabled: !!selectedOrder,
   });
+  const { data: selectedOrderExpenses = [] } = useQuery<Array<{ amount: number }>>({
+    queryKey: ["orderExpenses", selectedOrder?.id],
+    queryFn: async () => {
+      if (!selectedOrder) return [];
+      const { data, error } = await supabase
+        .from("accounting_transactions")
+        .select("amount")
+        .eq("type", "expense")
+        .eq("order_id", selectedOrder.id);
+      if (error) throw error;
+      return (data as Array<{ amount: number }> | null) ?? [];
+    },
+    enabled: !!selectedOrder,
+  });
+  const selectedOrderExpensesTotal = selectedOrderExpenses.reduce(
+    (sum, row) => sum + Math.abs(Number(row.amount || 0)),
+    0,
+  );
 
   useEffect(() => {
     const loadPaymentProofs = async () => {
@@ -1538,6 +1556,16 @@ Status: ${order.status} (${order.stage})`;
               <div className="space-y-1">
                 <p className="text-muted-foreground">Grand Total</p>
                 <p className="text-foreground font-semibold">R{selectedOrder.grand_total.toFixed(2)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-muted-foreground">Expenses linked</p>
+                <p className="text-foreground">R{selectedOrderExpensesTotal.toFixed(2)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-muted-foreground">Net after expenses</p>
+                <p className="text-foreground font-semibold">
+                  R{(selectedOrder.grand_total - selectedOrderExpensesTotal).toFixed(2)}
+                </p>
               </div>
             </div>
 

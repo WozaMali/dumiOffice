@@ -79,6 +79,7 @@ const Accounting = () => {
 
   const [clearLedgerOpen, setClearLedgerOpen] = useState(false);
   const [clearLedgerScope, setClearLedgerScope] = useState<"range" | "all">("range");
+  const [accountingTab, setAccountingTab] = useState<"ledger" | "expenses">("ledger");
 
   const { data: orders = [], refetch: refetchOrders } = useQuery<Order[]>({
     queryKey: ["orders", "accounting"],
@@ -216,9 +217,10 @@ const Accounting = () => {
   }, [ordersInRange, products, transactionsInRange]);
 
   const filteredTransactions = useMemo(() => {
-    const byType = txnFilterType === "all" ? transactionsInRange : transactionsInRange.filter((t) => t.type === txnFilterType);
+    const effectiveType = accountingTab === "expenses" ? "expense" : txnFilterType;
+    const byType = effectiveType === "all" ? transactionsInRange : transactionsInRange.filter((t) => t.type === effectiveType);
     return byType;
-  }, [transactionsInRange, txnFilterType]);
+  }, [transactionsInRange, txnFilterType, accountingTab]);
 
   const ledgerTotals = useMemo(() => {
     const income = filteredTransactions
@@ -235,6 +237,19 @@ const Accounting = () => {
     return filteredTransactions.slice(start, start + ledgerPageSize);
   }, [filteredTransactions, ledgerPage, ledgerPageSize]);
   const ledgerTotalPages = Math.max(1, Math.ceil(filteredTransactions.length / ledgerPageSize));
+  const expensesInRange = useMemo(
+    () => transactionsInRange.filter((t) => t.type === "expense"),
+    [transactionsInRange],
+  );
+  const expensesByVendor = useMemo(() => {
+    return Object.entries(
+      expensesInRange.reduce<Record<string, number>>((acc, row) => {
+        const key = row.vendor || "Unassigned";
+        acc[key] = (acc[key] ?? 0) + Math.abs(row.amount);
+        return acc;
+      }, {}),
+    ).sort((a, b) => b[1] - a[1]);
+  }, [expensesInRange]);
 
   const uploadAttachmentMutation = useMutation({
     mutationFn: (params: { transactionId: string; file: File }) =>
@@ -340,6 +355,26 @@ const Accounting = () => {
           Manage categories
         </Button>
       </div>
+      <div className="segmented-tabs mb-4">
+        <button
+          type="button"
+          className={`segmented-tab ${accountingTab === "ledger" ? "segmented-tab-active" : ""}`}
+          onClick={() => setAccountingTab("ledger")}
+        >
+          Ledger
+        </button>
+        <button
+          type="button"
+          className={`segmented-tab ${accountingTab === "expenses" ? "segmented-tab-active" : ""}`}
+          onClick={() => {
+            setAccountingTab("expenses");
+            setTxnFilterType("expense");
+            setLedgerPage(0);
+          }}
+        >
+          Expenses
+        </button>
+      </div>
 
       {/* Overview metrics */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -397,7 +432,7 @@ const Accounting = () => {
       </div>
 
       {/* Transaction entry panel */}
-      {transactionPanelOpen && (
+      {transactionPanelOpen && accountingTab === "ledger" && (
         <div className="editorial-panel mb-6">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -485,6 +520,25 @@ const Accounting = () => {
         </div>
       )}
 
+      {accountingTab === "expenses" && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-xs">
+          <div className="metric-card p-4">
+            <span className="metric-label">Total expenses</span>
+            <span className="metric-value">{formatCurrency(expensesInRange.reduce((s, t) => s + Math.abs(t.amount), 0))}</span>
+          </div>
+          <div className="metric-card p-4">
+            <span className="metric-label">Profit after expenses</span>
+            <span className={`metric-value ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.pnlNet)}</span>
+          </div>
+          <div className="metric-card p-4">
+            <span className="metric-label">Top vendor cost</span>
+            <span className="metric-value">
+              {expensesByVendor[0] ? `${expensesByVendor[0][0]} (${formatCurrency(expensesByVendor[0][1])})` : "-"}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Current ledger */}
       <div className="section-header">
         <div>
@@ -523,6 +577,7 @@ const Accounting = () => {
             className="filter-control h-9 text-xs"
             value={txnFilterType}
             onChange={(e) => { setTxnFilterType(e.target.value as any); setLedgerPage(0); }}
+            disabled={accountingTab === "expenses"}
           >
             <option value="all">All types</option>
             <option value="income">Income</option>

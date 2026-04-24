@@ -29,7 +29,9 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { accountingApi } from "@/lib/api/accounting";
-import type { AccountingTransaction, AccountingCategory } from "@/types/database";
+import { ordersApi } from "@/lib/api/orders";
+import { vendorsApi } from "@/lib/api/vendors";
+import type { AccountingTransaction, AccountingCategory, Vendor } from "@/types/database";
 import { useMemo, useState, useRef } from "react";
 
 const formatCurrency = (amount: number) =>
@@ -58,6 +60,14 @@ const Expenses = () => {
   const { data: categories = [] } = useQuery<AccountingCategory[]>({
     queryKey: ["accountingCategories"],
     queryFn: accountingApi.listCategories,
+  });
+  const { data: orders = [] } = useQuery({
+    queryKey: ["orders"],
+    queryFn: ordersApi.list,
+  });
+  const { data: vendors = [] } = useQuery<Vendor[]>({
+    queryKey: ["vendors"],
+    queryFn: vendorsApi.list,
   });
 
   const expenseCategories = useMemo(
@@ -89,6 +99,7 @@ const Expenses = () => {
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     category_id: "",
+    order_id: "",
     campaign: "",
     vendor: "",
     description: "",
@@ -118,8 +129,14 @@ const Expenses = () => {
     [expenses]
   );
   const uniqueVendors = useMemo(
-    () => Array.from(new Set(expenses.map((e) => e.vendor).filter(Boolean))) as string[],
-    [expenses]
+    () =>
+      Array.from(
+        new Set([
+          ...expenses.map((e) => e.vendor).filter(Boolean),
+          ...vendors.map((v) => v.name).filter(Boolean),
+        ]),
+      ) as string[],
+    [expenses, vendors]
   );
 
   const metrics = useMemo(() => {
@@ -207,6 +224,7 @@ const Expenses = () => {
         date: form.date,
         type: "expense" as const,
         category_id: form.category_id || null,
+        order_id: form.order_id || null,
         campaign: form.campaign.trim() || null,
         vendor: form.vendor.trim() || null,
         description: description || null,
@@ -263,6 +281,7 @@ const Expenses = () => {
     setForm({
       date: new Date().toISOString().slice(0, 10),
       category_id: "",
+      order_id: "",
       campaign: "",
       vendor: "",
       description: "",
@@ -280,6 +299,7 @@ const Expenses = () => {
       setForm({
         date: exp.date,
         category_id: exp.category_id ?? "",
+        order_id: exp.order_id ?? "",
         campaign: exp.campaign ?? "",
         vendor: exp.vendor ?? "",
         description: mainDesc,
@@ -857,6 +877,23 @@ const Expenses = () => {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label>Link to Order (optional)</Label>
+              <select
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={form.order_id}
+                onChange={(e) => setForm((f) => ({ ...f, order_id: e.target.value }))}
+              >
+                <option value="">— Not linked to an order —</option>
+                {orders.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {(o.reference || o.id).slice(0, 24)} · {o.customer_name || "Customer"} · R
+                    {Number(o.grand_total || 0).toFixed(2)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Campaign (optional)</Label>
@@ -868,11 +905,18 @@ const Expenses = () => {
               </div>
               <div className="space-y-2">
                 <Label>Vendor / Supplier</Label>
-                <Input
+                <select
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={form.vendor}
                   onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))}
-                  placeholder="e.g. ABC Packaging, Meta Ads"
-                />
+                >
+                  <option value="">— Select vendor —</option>
+                  {uniqueVendors.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

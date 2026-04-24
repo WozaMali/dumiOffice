@@ -8,6 +8,7 @@ import Orders from "./pages/Orders";
 import DispatchHub from "./pages/DispatchHub";
 import Inventory from "./pages/Inventory";
 import OilsPage from "./pages/OilsPage";
+import Vendors from "./pages/Vendors";
 import Expenses from "./pages/Expenses";
 import Content from "./pages/Content";
 import SettingsPage from "./pages/SettingsPage";
@@ -30,7 +31,12 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
+      <BrowserRouter
+        future={{
+          v7_startTransition: true,
+          v7_relativeSplatPath: true,
+        }}
+      >
         <Routes>
           <Route path="/login" element={<Login />} />
           {/* Public walk-in client form (no back-office login required) */}
@@ -75,6 +81,7 @@ const App = () => (
             <Route path="/clients" element={<Clients />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/oils" element={<OilsPage />} />
+            <Route path="/vendors" element={<Vendors />} />
             <Route path="/accounting" element={<Accounting />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/marketing" element={<Marketing />} />

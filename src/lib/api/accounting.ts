@@ -58,6 +58,7 @@ export const accountingApi = {
       category_id: string | null;
       description: string | null;
       amount: number;
+      order_id: string | null;
       reference: string | null;
       vendor: string | null;
       campaign: string | null;

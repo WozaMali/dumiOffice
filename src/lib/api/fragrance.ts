@@ -171,6 +171,14 @@ export const fragranceApi = {
     if (error) throw error;
   },
 
+  async deleteBottleProduct(id: string): Promise<void> {
+    const { error } = await supabase
+      .from("fragrance_bottle_products")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+  },
+
   async listPumpProducts(): Promise<PerfumePumpProduct[]> {
     const { data, error } = await supabase
       .from("perfume_pump_products")
@@ -189,6 +197,14 @@ export const fragranceApi = {
     if (error) throw error;
   },
 
+  async deletePumpProduct(id: string): Promise<void> {
+    const { error } = await supabase
+      .from("perfume_pump_products")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+  },
+
   async listCapProducts(): Promise<PerfumeCapProduct[]> {
     const { data, error } = await supabase
       .from("perfume_cap_products")
@@ -204,6 +220,14 @@ export const fragranceApi = {
     const { error } = await supabase
       .from("perfume_cap_products")
       .insert(products);
+    if (error) throw error;
+  },
+
+  async deleteCapProduct(id: string): Promise<void> {
+    const { error } = await supabase
+      .from("perfume_cap_products")
+      .delete()
+      .eq("id", id);
     if (error) throw error;
   },
 

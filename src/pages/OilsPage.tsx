@@ -2,14 +2,18 @@ import { useEffect, useState, type ChangeEvent } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import PageHero from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Download, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fragranceApi } from "@/lib/api/fragrance";
+import { vendorsApi } from "@/lib/api/vendors";
+import { accountingApi } from "@/lib/api/accounting";
 import type {
   ScentechEthanolProduct,
   ScentProduct,
   ScentProforma,
   ScentProformaExtraLine,
+  Vendor,
 } from "@/types/database";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
@@ -74,6 +78,9 @@ const OilsPage = () => {
   const [printFees, setPrintFees] = useState<
     { name: string; colour: string; type: string; price: string; qty: string }
   >([{ name: "", colour: "", type: "", price: "", qty: "" }]);
+  const [uvStickersAndTags, setUvStickersAndTags] = useState<
+    { item: string; stickerCode: string; colour: string; shape: string; price: string; qty: string }
+  >([{ item: "", stickerCode: "", colour: "", shape: "", price: "", qty: "" }]);
   const [scentSearch, setScentSearch] = useState("");
   const [ethanolRows, setEthanolRows] = useState<
     { id?: string; name: string; liters: string; price: string; qty: string }
@@ -81,7 +88,11 @@ const OilsPage = () => {
   const [selectedProformaId, setSelectedProformaId] = useState<string | null>(null);
   const [editingProformaId, setEditingProformaId] = useState<string | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-
+  const [selectedVendorId, setSelectedVendorId] = useState("");
+  const [proformaDate, setProformaDate] = useState(
+    () => new Date().toISOString().slice(0, 10),
+  );
+  const [vendorInvoiceDate, setVendorInvoiceDate] = useState("");
   const queryClient = useQueryClient();
 
   const { data: scentProducts = [] } = useQuery<ScentProduct[]>({
@@ -93,6 +104,17 @@ const OilsPage = () => {
     queryKey: ["scentProformas"],
     queryFn: fragranceApi.listProformas,
   });
+  const { data: vendors = [] } = useQuery<Vendor[]>({
+    queryKey: ["vendors"],
+    queryFn: vendorsApi.list,
+  });
+
+  const selectedVendorName =
+    vendors.find((v) => v.id === selectedVendorId)?.name ?? "ACS Promotions";
+  const getSupplierName = (proforma: ScentProforma) => {
+    const linked = vendors.find((v) => v.id === proforma.vendor_id);
+    return linked?.name || proforma.customer_name || "—";
+  };
 
   const { data: selectedProformaLines = [], isFetching: isProformaLinesFetching } = useQuery({
     queryKey: ["scentProformaLines", selectedProformaId],
@@ -633,6 +655,43 @@ const OilsPage = () => {
     ]);
   };
 
+  const updateUvStickerTag = (
+    index: number,
+    field: "item" | "stickerCode" | "colour" | "shape" | "price" | "qty",
+    value: string,
+  ) => {
+    setUvStickersAndTags((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)),
+    );
+  };
+
+  const addUvStickerTagRow = () => {
+    setUvStickersAndTags((prev) => [
+      ...prev,
+      { item: "", stickerCode: "", colour: "", shape: "", price: "", qty: "" },
+    ]);
+  };
+
+  const removeUvStickerTagRow = (index: number) => {
+    setUvStickersAndTags((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removePrintFeeRow = (index: number) => {
+    setPrintFees((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeBottleRow = (index: number) => {
+    setBottles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removePumpRow = (index: number) => {
+    setPumps((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeCapRow = (index: number) => {
+    setCaps((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const updateEthanol = (
     index: number,
     field: "name" | "liters" | "price" | "qty",
@@ -850,8 +909,11 @@ const OilsPage = () => {
       if (!proFormaRows.length) {
         throw new Error("No pro-forma lines to create an order.");
       }
+      if (!selectedVendorId) {
+        throw new Error("Select a vendor before creating a DE order.");
+      }
 
-      // Auto-generate next reference like DE-000001
+      // Next DE-000001 reference from highest existing DE-###### (set historical rows in Supabase if needed)
       const existing = await fragranceApi.listProformas();
       const prefix = "DE-";
       let maxSeq = 0;
@@ -866,9 +928,12 @@ const OilsPage = () => {
 
       const header = {
         name: "Fragrance purchase",
-        customer_name: "ACS Promotions",
+        customer_name: selectedVendorName,
+        vendor_id: selectedVendorId || null,
         reference: nextRef,
         status: "pending" as const,
+        proforma_date: proformaDate || null,
+        invoice_date: vendorInvoiceDate || null,
         subtotal,
         vat,
         total,
@@ -946,7 +1011,7 @@ const OilsPage = () => {
             };
           })
           .filter((l): l is NonNullable<typeof l> => l !== null),
-        // Print fees
+        // Extras
         ...printFees
           .map((row) => {
             const totalAmount = amountValue(row.price, row.qty);
@@ -956,7 +1021,7 @@ const OilsPage = () => {
             if (row.type) specBits.push(row.type);
             return {
               kind: "print_fee" as const,
-              name: row.name || "Print fee",
+              name: row.name || "Extra",
               spec: specBits.join(" · "),
               qty: parseQty(row.qty),
               line_total: totalAmount,
@@ -1019,8 +1084,37 @@ const OilsPage = () => {
 
       return fragranceApi.createProforma(header, lines, extras);
     },
-    onSuccess: () => {
+    onSuccess: async (result) => {
       toast.success("Order created from pro-forma");
+      const trimmedVendor = selectedVendorName.trim();
+      if (trimmedVendor && result?.header?.reference) {
+        try {
+          const categories = await accountingApi.listCategories();
+          const materialsCategory = categories.find(
+            (c) =>
+              c.kind === "expense" &&
+              /(material|packaging|raw|procurement|supplier|sourcing)/i.test(c.name || ""),
+          );
+          await accountingApi.createTransaction({
+            date:
+              vendorInvoiceDate ||
+              proformaDate ||
+              new Date().toISOString().slice(0, 10),
+            type: "expense",
+            category_id: materialsCategory?.id,
+            description: `DE Order ${result.header.reference} - ${trimmedVendor}`,
+            amount: -Math.abs(Number(result.header.total || 0)),
+            reference: result.header.reference,
+            vendor: trimmedVendor,
+            campaign: "DE Orders",
+            created_by: "Admin",
+          });
+          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+        } catch (err) {
+          console.error("Failed to create linked DE expense", err);
+          toast.warning("DE order created, but linked expense could not be recorded automatically.");
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ["scentProducts"] });
       queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
     },
@@ -1040,11 +1134,27 @@ const OilsPage = () => {
       toast.error(err.message || "Failed to delete pro-forma");
     },
   });
-
   const selectedProforma =
     selectedProformaId != null
       ? scentProformas.find((p) => p.id === selectedProformaId) ?? null
       : null;
+  const selectedProformaSupplier = selectedProforma
+    ? getSupplierName(selectedProforma)
+    : "—";
+
+  useEffect(() => {
+    if (!editingProformaId || !selectedProforma) return;
+    const matchedVendor =
+      vendors.find((v) => v.id === selectedProforma.vendor_id) ??
+      vendors.find((v) => v.name === (selectedProforma.customer_name || "").trim());
+    setSelectedVendorId(matchedVendor?.id ?? "");
+    setProformaDate(
+      selectedProforma.proforma_date ||
+        selectedProforma.created_at?.slice(0, 10) ||
+        new Date().toISOString().slice(0, 10),
+    );
+    setVendorInvoiceDate(selectedProforma.invoice_date || "");
+  }, [editingProformaId, selectedProforma, vendors]);
 
   const handleDownloadSelectedHistoryPdf = async (
     orientation: "portrait" | "landscape" = "landscape",
@@ -1137,11 +1247,103 @@ const OilsPage = () => {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    const createdDate = new Date(selectedProforma.created_at).toISOString().slice(0, 10);
-    doc.text(`Generated: ${createdDate}`, margin, 64);
+    const createdDate =
+      selectedProforma.proforma_date ||
+      new Date(selectedProforma.created_at).toISOString().slice(0, 10);
+    doc.text(
+      `Reference: ${selectedProforma.reference || "—"} · Pro-forma date: ${createdDate}`,
+      margin,
+      64,
+    );
+    const invoiceLine = selectedProforma.invoice_date
+      ? `Invoice date: ${selectedProforma.invoice_date}`
+      : "Invoice date: —";
+    doc.text(invoiceLine, margin, 69);
 
-    // Start content area below header
-    let contentY = 80;
+    // Supplier / vendor (order history) — right column, aligned with document meta
+    const historyVendor =
+      vendors.find((v) => v.id === selectedProforma.vendor_id) ??
+      vendors.find(
+        (v) =>
+          v.name.trim() ===
+          (selectedProforma.customer_name || "").trim(),
+      );
+
+    const rightX = pageWidth - margin;
+    const rightColWidth = (pageWidth - 2 * margin) * 0.48;
+    const pushVendorLines = (out: string[], line: string) => {
+      const wrapped = doc.splitTextToSize(line, rightColWidth);
+      out.push(...wrapped);
+    };
+    const supplierLines: string[] = [];
+    if (historyVendor) {
+      pushVendorLines(supplierLines, historyVendor.name);
+      if (historyVendor.vat_number) {
+        pushVendorLines(supplierLines, `VAT: ${historyVendor.vat_number}`);
+      }
+      if (historyVendor.company_registration) {
+        pushVendorLines(
+          supplierLines,
+          `Company reg: ${historyVendor.company_registration}`,
+        );
+      }
+      if (historyVendor.street_address) {
+        pushVendorLines(supplierLines, historyVendor.street_address);
+      } else if (historyVendor.address) {
+        pushVendorLines(supplierLines, historyVendor.address);
+      }
+      const cityParts = [
+        historyVendor.suburb,
+        historyVendor.city,
+        historyVendor.province,
+        historyVendor.postal_code,
+        historyVendor.country,
+      ].filter(Boolean);
+      if (cityParts.length) {
+        pushVendorLines(supplierLines, cityParts.join(", "));
+      }
+      if (historyVendor.contact_name) {
+        pushVendorLines(
+          supplierLines,
+          `Contact: ${historyVendor.contact_name}`,
+        );
+      }
+      if (historyVendor.email) {
+        pushVendorLines(supplierLines, historyVendor.email);
+      }
+      if (historyVendor.contact_phone) {
+        pushVendorLines(supplierLines, historyVendor.contact_phone);
+      }
+    } else {
+      pushVendorLines(
+        supplierLines,
+        getSupplierName(selectedProforma) || "—",
+      );
+      if (selectedProforma.customer_name?.trim()) {
+        pushVendorLines(
+          supplierLines,
+          `Recorded name: ${selectedProforma.customer_name.trim()}`,
+        );
+      }
+    }
+
+    let yRight = 57;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(40, 40, 40);
+    doc.text("Supplier (vendor details)", rightX, yRight, { align: "right" });
+    yRight += 5.5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    supplierLines.forEach((line) => {
+      doc.text(line, rightX, yRight, { align: "right" });
+      yRight += 4.2;
+    });
+    yRight += 2;
+
+    const yLeftEnd = 69;
+    // Tables start below the lower of: left metadata block, right vendor block
+    let contentY = Math.max(yLeftEnd, yRight) + 3;
 
     const ensureSpace = (neededHeight: number) => {
       const bottomMargin = pageHeight - 20;
@@ -1163,35 +1365,30 @@ const OilsPage = () => {
     const colX3 = colX2 + col2Width;
     const colX4 = colX3 + col3Width;
     const rowHeight = 5;
+    const titleRowHeight = 6;
 
     const drawTableSection = (
       title: string,
       headers: [string, string, string, string],
       rows: { c1: string; c2: string; c3: string; c4: string }[],
     ) => {
-      // Section heading
-      ensureSpace(rowHeight * 2);
+      // Do not render unselected/empty sections in exports.
+      if (rows.length === 0) return;
+      // Section title as the top row of the same table (full-width band, no gap above column headers)
+      ensureSpace(titleRowHeight + rowHeight + 2);
+      let yTop = contentY;
+      doc.setDrawColor(200, 170, 90);
+      doc.setFillColor(240, 236, 224);
+      doc.rect(tableX, yTop, tableWidth, titleRowHeight, "FD");
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.setTextColor(40, 40, 40);
-      doc.text(title, tableX, contentY);
-      contentY += rowHeight;
+      doc.text(title, tableX + 2, yTop + 4.2);
+      contentY += titleRowHeight;
 
-      // If no rows, show simple note and skip table/grid
-      if (rows.length === 0) {
-        ensureSpace(rowHeight);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(7);
-        doc.setTextColor(130, 130, 130);
-        doc.text("No items captured.", tableX, contentY + 3);
-        contentY += rowHeight + 3;
-        contentY += 2;
-        return;
-      }
-
-      // Header row
+      // Column header row
       ensureSpace(rowHeight + 2);
-      let yTop = contentY;
+      yTop = contentY;
       let yText = yTop + 3.5;
       doc.setDrawColor(200, 170, 90);
       doc.setFillColor(245, 245, 245);
@@ -1236,6 +1433,81 @@ const OilsPage = () => {
       contentY += 3;
     };
 
+    // Materials / extras: Product, Spec, Unit price, Qty, Line total
+    const w5 = [0.26, 0.24, 0.16, 0.1, 0.24] as const;
+    const col5: number[] = [tableX];
+    w5.forEach((p) => {
+      col5.push(col5[col5.length - 1] + p * tableWidth);
+    });
+
+    const drawTableSection5 = (
+      title: string,
+      headers: [string, string, string, string, string],
+      rows: { c1: string; c2: string; c3: string; c4: string; c5: string }[],
+    ) => {
+      if (rows.length === 0) return;
+      ensureSpace(titleRowHeight + rowHeight + 2);
+      let yTop = contentY;
+      doc.setDrawColor(200, 170, 90);
+      doc.setFillColor(240, 236, 224);
+      doc.rect(tableX, yTop, tableWidth, titleRowHeight, "FD");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(40, 40, 40);
+      doc.text(title, tableX + 2, yTop + 4.2);
+      contentY += titleRowHeight;
+
+      ensureSpace(rowHeight + 2);
+      yTop = contentY;
+      let yText = yTop + 3.5;
+      doc.setDrawColor(200, 170, 90);
+      doc.setFillColor(245, 245, 245);
+      doc.rect(tableX, yTop, tableWidth, rowHeight, "F");
+      for (let k = 1; k <= 4; k++) {
+        doc.line(col5[k], yTop, col5[k], yTop + rowHeight);
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(40, 40, 40);
+      doc.text(headers[0], col5[0] + 2, yText);
+      doc.text(headers[1], col5[1] + 2, yText);
+      doc.text(headers[2], col5[3] - 2, yText, { align: "right" });
+      doc.text(headers[3], col5[4] - 2, yText, { align: "right" });
+      doc.text(headers[4], col5[5] - 2, yText, { align: "right" });
+
+      contentY += rowHeight;
+
+      rows.forEach((row) => {
+        ensureSpace(rowHeight + 2);
+        yTop = contentY;
+        yText = yTop + 3.5;
+        doc.setDrawColor(220, 220, 220);
+        doc.rect(tableX, yTop, tableWidth, rowHeight);
+        for (let k = 1; k <= 4; k++) {
+          doc.line(col5[k], yTop, col5[k], yTop + rowHeight);
+        }
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(40, 40, 40);
+        doc.text(row.c1, col5[0] + 2, yText);
+        if (row.c2) doc.text(row.c2, col5[1] + 2, yText);
+        if (row.c3) {
+          doc.text(row.c3, col5[3] - 2, yText, { align: "right" });
+        }
+        if (row.c4) {
+          doc.text(row.c4, col5[4] - 2, yText, { align: "right" });
+        }
+        if (row.c5) {
+          doc.text(row.c5, col5[5] - 2, yText, { align: "right" });
+        }
+        contentY += rowHeight;
+      });
+
+      contentY += 3;
+    };
+
     // Build rows from stored pro-forma lines (match Pro-Forma scent section)
     const scentRows = selectedProformaLines
       .map((line: any) => {
@@ -1246,6 +1518,7 @@ const OilsPage = () => {
         if (!qty1 && !qty5 && !qty2 && !qty1h) return null;
 
         const rowTotalNum = Number(line.row_total ?? 0) || 0;
+        if (rowTotalNum <= 0) return null;
 
         const sizeBits: string[] = [];
         if (qty1) sizeBits.push(`${qty1} × 1kg`);
@@ -1276,72 +1549,85 @@ const OilsPage = () => {
       scentRows,
     );
 
+    const extraLineIsComplete = (e: ScentProformaExtraLine) => {
+      const q = Number(e.qty ?? 0) || 0;
+      const lt = Number(e.line_total ?? 0) || 0;
+      return q > 0 && lt > 0;
+    };
+
     const extrasOfKind = (kind: ScentProformaExtraLine["kind"]) =>
       selectedProformaExtras
         .filter((e) => e.kind === kind)
-        .map((e) => ({
-          c1: e.name,
-          c2: e.spec ?? "",
-          c3: e.qty ? String(e.qty) : "",
-          c4: e.line_total ? `R${e.line_total.toFixed(2)}` : "",
-        }));
+        .filter(extraLineIsComplete)
+        .map((e) => {
+          const q = Number(e.qty) || 0;
+          const lt = Number(e.line_total) || 0;
+          const unit = q > 0 ? lt / q : 0;
+          return {
+            c1: e.name,
+            c2: e.spec ?? "",
+            c3: `R${unit.toFixed(2)}`,
+            c4: String(q),
+            c5: `R${lt.toFixed(2)}`,
+          };
+        });
 
     const bottleRows = extrasOfKind("bottle");
-    const printRows = extrasOfKind("print_fee");
     const ethanolRowsPdf = extrasOfKind("ethanol");
     const pumpRows = extrasOfKind("pump");
     const capRows = extrasOfKind("cap");
+    const printRows = extrasOfKind("print_fee");
+
+    const matHeaders5: [string, string, string, string, string] = [
+      "Product / item",
+      "Spec",
+      "Unit price",
+      "Qty",
+      "Line total",
+    ];
 
     if (bottleRows.length) {
-      drawTableSection(
-        "Fragrance bottles",
-        ["Bottle", "Spec", "Qty", "Line total"],
-        bottleRows,
-      );
-    }
-
-    if (printRows.length) {
-      drawTableSection(
-        "Print fees",
-        ["Description", "Spec", "Qty", "Line total"],
-        printRows,
-      );
+      drawTableSection5("Fragrance bottles", matHeaders5, bottleRows);
     }
 
     if (ethanolRowsPdf.length) {
-      drawTableSection(
-        "Scentech Ethanol",
-        ["Name", "Spec", "Qty", "Line total"],
-        ethanolRowsPdf,
-      );
+      drawTableSection5("Scentech Ethanol", matHeaders5, ethanolRowsPdf);
     }
 
     if (pumpRows.length) {
-      drawTableSection(
-        "Perfume pumps",
-        ["Pump", "Spec", "Qty", "Line total"],
-        pumpRows,
-      );
+      drawTableSection5("Perfume pumps", matHeaders5, pumpRows);
     }
 
     if (capRows.length) {
-      drawTableSection(
-        "Perfume caps",
-        ["Cap", "Spec", "Qty", "Line total"],
-        capRows,
-      );
+      drawTableSection5("Perfume caps", matHeaders5, capRows);
+    }
+
+    // Extras should always render last.
+    if (printRows.length) {
+      drawTableSection5("Extras", matHeaders5, printRows);
     }
 
     // Summary box: Scents subtotal, Other materials, Subtotal, Total (incl. VAT)
+    // Subtotals match lines shown in the PDF tables (qty + price required).
     const scentsSubtotalPdf = selectedProformaLines.reduce(
-      (sum: number, line: any) =>
-        sum + (Number(line.row_total ?? 0) || 0),
+      (sum: number, line: any) => {
+        const qty1 = Number(line.qty_1kg ?? 0) || 0;
+        const qty5 = Number(line.qty_500g ?? 0) || 0;
+        const qty2 = Number(line.qty_200g ?? 0) || 0;
+        const qty1h = Number(line.qty_100g ?? 0) || 0;
+        if (!qty1 && !qty5 && !qty2 && !qty1h) return sum;
+        const rowTotal = Number(line.row_total ?? 0) || 0;
+        if (rowTotal <= 0) return sum;
+        return sum + rowTotal;
+      },
       0,
     );
-    const extrasSubtotalPdf = selectedProformaExtras.reduce(
-      (sum: number, e) => sum + (Number(e.line_total ?? 0) || 0),
-      0,
-    );
+    const extrasSubtotalPdf = selectedProformaExtras
+      .filter(extraLineIsComplete)
+      .reduce(
+        (sum: number, e) => sum + (Number(e.line_total ?? 0) || 0),
+        0,
+      );
     const subtotalPdf = scentsSubtotalPdf + extrasSubtotalPdf;
     const totalInclVat =
       Number(selectedProforma.total ?? subtotalPdf) || subtotalPdf;
@@ -1462,7 +1748,7 @@ const OilsPage = () => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.text(
-      `Created: ${new Date(proforma.created_at).toLocaleString()}`,
+      `Created: ${new Date(proforma.proforma_date || proforma.created_at).toLocaleString()}`,
       margin,
       64,
     );
@@ -1786,6 +2072,39 @@ const OilsPage = () => {
     },
   });
 
+  const deleteBottleProductMutation = useMutation({
+    mutationFn: (id: string) => fragranceApi.deleteBottleProduct(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bottleProducts"] });
+      toast.success("Bottle product deleted");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to delete bottle product");
+    },
+  });
+
+  const deletePumpProductMutation = useMutation({
+    mutationFn: (id: string) => fragranceApi.deletePumpProduct(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pumpProducts"] });
+      toast.success("Pump product deleted");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to delete pump product");
+    },
+  });
+
+  const deleteCapProductMutation = useMutation({
+    mutationFn: (id: string) => fragranceApi.deleteCapProduct(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["capProducts"] });
+      toast.success("Cap product deleted");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to delete cap product");
+    },
+  });
+
   const handleDownloadPdf = async (orientation: "portrait" | "landscape" = "landscape") => {
     const { jsPDF } = await import("jspdf");
     const doc = new jsPDF({
@@ -1887,6 +2206,8 @@ const OilsPage = () => {
         headers: [string, string, string, string],
         rows: { c1: string; c2: string; c3: string; c4: string }[],
       ) => {
+        // Do not render unselected/empty sections in exports.
+        if (rows.length === 0) return;
         // Section heading
         ensureSpace(rowHeight * 2);
         doc.setFont("helvetica", "bold");
@@ -1894,18 +2215,6 @@ const OilsPage = () => {
         doc.setTextColor(40, 40, 40);
         doc.text(title, tableX, contentY);
         contentY += rowHeight;
-
-        // If no rows, show simple note and skip table/grid
-        if (rows.length === 0) {
-          ensureSpace(rowHeight);
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(7);
-          doc.setTextColor(130, 130, 130);
-          doc.text("No items captured.", tableX, contentY + 3);
-          contentY += rowHeight + 3;
-          contentY += 2;
-          return;
-        }
 
         // Header row
         ensureSpace(rowHeight + 2);
@@ -2026,29 +2335,6 @@ const OilsPage = () => {
 
       drawTableSection("Fragrance bottles", ["Bottle", "Spec", "Qty", "Line total"], bottleRows);
 
-      // 3) Print fees
-      const printRows = printFees
-        .map((row) => {
-          const totalAmount = amountValue(row.price, row.qty);
-          if (!row.name && !totalAmount) return null;
-          const specBits: string[] = [];
-          if (row.colour) specBits.push(row.colour);
-          if (row.type) specBits.push(row.type);
-          return {
-            c1: row.name || "Print fee",
-            c2: specBits.join(" · "),
-            c3: row.qty ? `${row.qty}` : "",
-            c4: totalAmount ? `R${totalAmount.toFixed(2)}` : "",
-          };
-        })
-        .filter((l): l is NonNullable<typeof l> => l !== null);
-
-      drawTableSection(
-        "Print fees",
-        ["Description", "Spec", "Qty", "Line total"],
-        printRows,
-      );
-
       // 4) Scentech Ethanol
       const ethanolPdfRows = ethanolRows
         .map((row) => {
@@ -2114,6 +2400,29 @@ const OilsPage = () => {
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
       drawTableSection("Perfume caps", ["Cap", "Spec", "Qty", "Line total"], capRows);
+
+      // 7) Extras (always last)
+      const printRows = printFees
+        .map((row) => {
+          const totalAmount = amountValue(row.price, row.qty);
+          if (!row.name && !totalAmount) return null;
+          const specBits: string[] = [];
+          if (row.colour) specBits.push(row.colour);
+          if (row.type) specBits.push(row.type);
+          return {
+            c1: row.name || "Extra",
+            c2: specBits.join(" · "),
+            c3: row.qty ? `${row.qty}` : "",
+            c4: totalAmount ? `R${totalAmount.toFixed(2)}` : "",
+          };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
+
+      drawTableSection(
+        "Extras",
+        ["Description", "Spec", "Qty", "Line total"],
+        printRows,
+      );
 
       // Summary box with current totals at bottom-right of last page
       const boxWidth = 80;
@@ -2984,113 +3293,6 @@ const OilsPage = () => {
         <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
           <div>
             <h2 className="text-sm font-semibold text-foreground">
-              Print fee
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={addPrintFeeRow}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add print fee
-          </button>
-        </div>
-
-        <div className="max-h-[360px] overflow-auto">
-          <table className="min-w-full text-xs">
-            <thead className="bg-muted/60 sticky top-0 z-10">
-              <tr>
-                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                  Name
-                </th>
-                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                  Colour
-                </th>
-                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                  Type
-                </th>
-                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                  Price
-                </th>
-                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                  Qty
-                </th>
-                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
-                  Total amount
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {printFees.map((row, index) => (
-                <tr
-                  key={index}
-                  className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
-                >
-                  <td className="px-3 py-2 border-b border-border/40">
-                    <input
-                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
-                      placeholder="Name"
-                      value={row.name}
-                      onChange={(e) =>
-                        updatePrintFee(index, "name", e.target.value)
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 border-b border-border/40">
-                    <input
-                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
-                      placeholder="Colour"
-                      value={row.colour}
-                      onChange={(e) =>
-                        updatePrintFee(index, "colour", e.target.value)
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 border-b border-border/40">
-                    <input
-                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
-                      placeholder="Type"
-                      value={row.type}
-                      onChange={(e) =>
-                        updatePrintFee(index, "type", e.target.value)
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 border-b border-border/40">
-                    <input
-                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
-                      placeholder="0.00"
-                      value={row.price}
-                      onChange={(e) =>
-                        updatePrintFee(index, "price", e.target.value)
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 border-b border-border/40">
-                    <input
-                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
-                      placeholder="Qty"
-                      value={row.qty}
-                      onChange={(e) =>
-                        updatePrintFee(index, "qty", e.target.value)
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 border-b border-border/40 text-right text-muted-foreground">
-                    {calcAmount(row.price, row.qty)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="glass-card overflow-x-auto mt-6">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">
               Perfume caps
             </h2>
           </div>
@@ -3237,6 +3439,115 @@ const OilsPage = () => {
         </div>
       </div>
 
+      {/* Extras (always last) */}
+      <div className="glass-card overflow-x-auto mt-6">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Extras</h2>
+          </div>
+          <button
+            type="button"
+            onClick={addPrintFeeRow}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add extra
+          </button>
+        </div>
+
+        <div className="max-h-[360px] overflow-auto">
+          <table className="min-w-full text-xs">
+            <thead className="bg-muted/60 sticky top-0 z-10">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                  Name
+                </th>
+                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                  Colour
+                </th>
+                <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                  Type
+                </th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                  Price
+                </th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                  Qty
+                </th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                  Total amount
+                </th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {printFees.map((row, index) => (
+                <tr
+                  key={index}
+                  className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
+                >
+                  <td className="px-3 py-2 border-b border-border/40">
+                    <input
+                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                      placeholder="Name"
+                      value={row.name}
+                      onChange={(e) => updatePrintFee(index, "name", e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-2 border-b border-border/40">
+                    <input
+                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                      placeholder="Colour"
+                      value={row.colour}
+                      onChange={(e) => updatePrintFee(index, "colour", e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-2 border-b border-border/40">
+                    <input
+                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                      placeholder="Type"
+                      value={row.type}
+                      onChange={(e) => updatePrintFee(index, "type", e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-2 border-b border-border/40">
+                    <input
+                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                      placeholder="0.00"
+                      value={row.price}
+                      onChange={(e) => updatePrintFee(index, "price", e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-2 border-b border-border/40">
+                    <input
+                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                      placeholder="Qty"
+                      value={row.qty}
+                      onChange={(e) => updatePrintFee(index, "qty", e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-2 border-b border-border/40 text-right text-muted-foreground">
+                    {calcAmount(row.price, row.qty)}
+                  </td>
+                  <td className="px-3 py-2 border-b border-border/40 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removePrintFeeRow(index)}
+                      className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                      aria-label="Delete extra row"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="glass-card mt-8 max-w-md ml-auto">
         <div className="px-4 py-3 border-b border-border/60">
           <h2 className="text-sm font-semibold text-foreground">
@@ -3247,6 +3558,39 @@ const OilsPage = () => {
           </p>
         </div>
         <div className="px-4 py-3 space-y-2 text-sm">
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-xs">Vendor / Supplier</span>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={selectedVendorId}
+              onChange={(e) => setSelectedVendorId(e.target.value)}
+            >
+              <option value="">Select vendor (defaults to ACS Promotions)</option>
+              {vendors.map((vendor) => (
+                <option key={vendor.id} value={vendor.id}>
+                  {vendor.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-xs">Pro-forma date</span>
+            <Input
+              type="date"
+              className="h-9"
+              value={proformaDate}
+              onChange={(e) => setProformaDate(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-xs">Vendor invoice date (optional)</span>
+            <Input
+              type="date"
+              className="h-9"
+              value={vendorInvoiceDate}
+              onChange={(e) => setVendorInvoiceDate(e.target.value)}
+            />
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Subtotal</span>
             <span className="font-medium text-foreground">
@@ -3630,6 +3974,9 @@ const OilsPage = () => {
                     <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
                       Qty
                     </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3704,6 +4051,20 @@ const OilsPage = () => {
                           onChange={(e) => updateBottle(index, "qty", e.target.value)}
                         />
                       </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const id = (row as any).id as string | undefined;
+                            removeBottleRow(index);
+                            if (id) deleteBottleProductMutation.mutate(id);
+                          }}
+                          className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                          aria-label="Delete bottle row"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -3769,6 +4130,9 @@ const OilsPage = () => {
                     <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
                       Qty
                     </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3828,6 +4192,20 @@ const OilsPage = () => {
                           value={row.qty}
                           onChange={(e) => updatePump(index, "qty", e.target.value)}
                         />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const id = (row as any).id as string | undefined;
+                            removePumpRow(index);
+                            if (id) deletePumpProductMutation.mutate(id);
+                          }}
+                          className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                          aria-label="Delete pump row"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -3894,6 +4272,9 @@ const OilsPage = () => {
                     <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
                       Qty
                     </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3951,6 +4332,20 @@ const OilsPage = () => {
                           value={row.qty}
                           onChange={(e) => updateCap(index, "qty", e.target.value)}
                         />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const id = (row as any).id as string | undefined;
+                            removeCapRow(index);
+                            if (id) deleteCapProductMutation.mutate(id);
+                          }}
+                          className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                          aria-label="Delete cap row"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -4049,6 +4444,243 @@ const OilsPage = () => {
                             updateEthanol(index, "qty", e.target.value)
                           }
                         />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="glass-card overflow-x-auto mt-6">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">UV Stickers & Tags</h2>
+              </div>
+              <button
+                type="button"
+                onClick={addUvStickerTagRow}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add UV sticker/tag
+              </button>
+            </div>
+
+            <div className="max-h-[360px] overflow-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-muted/60 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-center font-semibold text-muted-foreground border-b border-border/70 w-10">
+                      #
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Item
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Sticker Code
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Colour
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Shape
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Price
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Qty
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Total amount
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uvStickersAndTags.map((row, index) => (
+                    <tr
+                      key={index}
+                      className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
+                    >
+                      <td className="px-3 py-2 border-b border-border/40 text-center text-xs text-muted-foreground">
+                        {index + 1}
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Item"
+                          value={row.item}
+                          onChange={(e) => updateUvStickerTag(index, "item", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Sticker Code"
+                          value={row.stickerCode}
+                          onChange={(e) => updateUvStickerTag(index, "stickerCode", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Colour"
+                          value={row.colour}
+                          onChange={(e) => updateUvStickerTag(index, "colour", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Shape"
+                          value={row.shape}
+                          onChange={(e) => updateUvStickerTag(index, "shape", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                          placeholder="0.00"
+                          value={row.price}
+                          onChange={(e) => updateUvStickerTag(index, "price", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                          placeholder="Qty"
+                          value={row.qty}
+                          onChange={(e) => updateUvStickerTag(index, "qty", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right text-muted-foreground">
+                        {calcAmount(row.price, row.qty)}
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removeUvStickerTagRow(index)}
+                          className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                          aria-label="Delete UV sticker/tag row"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Extras (always last in Products tab) */}
+          <div className="glass-card overflow-x-auto mt-6">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Extras</h2>
+                <p className="text-xs text-muted-foreground">
+                  Optional add-ons to include in future pro-formas and exports.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={addPrintFeeRow}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add extra
+              </button>
+            </div>
+
+            <div className="max-h-[360px] overflow-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-muted/60 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Name
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Colour
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Type
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Price
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Qty
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Total amount
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printFees.map((row, index) => (
+                    <tr
+                      key={index}
+                      className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
+                    >
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Name"
+                          value={row.name}
+                          onChange={(e) => updatePrintFee(index, "name", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Colour"
+                          value={row.colour}
+                          onChange={(e) => updatePrintFee(index, "colour", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
+                          placeholder="Type"
+                          value={row.type}
+                          onChange={(e) => updatePrintFee(index, "type", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                          placeholder="0.00"
+                          value={row.price}
+                          onChange={(e) => updatePrintFee(index, "price", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        <input
+                          className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                          placeholder="Qty"
+                          value={row.qty}
+                          onChange={(e) => updatePrintFee(index, "qty", e.target.value)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right text-muted-foreground">
+                        {calcAmount(row.price, row.qty)}
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removePrintFeeRow(index)}
+                          className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                          aria-label="Delete extra row"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -4382,7 +5014,10 @@ const OilsPage = () => {
                       Total
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
-                      Created at
+                      Pro-forma date
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Invoice date
                     </th>
                     <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
                       Actions
@@ -4403,9 +5038,7 @@ const OilsPage = () => {
                       <td className="px-3 py-2 border-b border-border/40">
                         {pf.name}
                       </td>
-                      <td className="px-3 py-2 border-b border-border/40">
-                        {pf.customer_name || "—"}
-                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">{getSupplierName(pf)}</td>
                       <td className="px-3 py-2 border-b border-border/40">
                         {pf.reference || "—"}
                       </td>
@@ -4422,7 +5055,10 @@ const OilsPage = () => {
                         {pf.total.toFixed(2)}
                       </td>
                       <td className="px-3 py-2 border-b border-border/40">
-                        {new Date(pf.created_at).toLocaleString()}
+                        {(pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString()}
+                      </td>
+                      <td className="px-3 py-2 border-b border-border/40">
+                        {pf.invoice_date || "—"}
                       </td>
                       <td className="px-3 py-2 border-b border-border/40 text-right space-x-2">
                         <button
@@ -4510,9 +5146,38 @@ const OilsPage = () => {
                       {new Date(selectedProforma.created_at).toLocaleString()}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Supplier: {selectedProforma.customer_name || "ACS Promotions"} · Reference:{" "}
-                      {selectedProforma.reference || "—"}
+                      Supplier: {selectedProformaSupplier}
                     </p>
+                    <div className="mt-2 rounded-md border border-border/60 bg-muted/25 px-3 py-2 text-xs">
+                      <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                        <span>
+                          <span className="text-muted-foreground">Reference </span>
+                          <span className="font-mono font-medium text-foreground">
+                            {selectedProforma.reference || "—"}
+                          </span>
+                        </span>
+                        <span>
+                          <span className="text-muted-foreground">Pro-forma date </span>
+                          <span className="text-foreground">
+                            {(
+                              selectedProforma.proforma_date ||
+                              selectedProforma.created_at?.slice(0, 10) ||
+                              "—"
+                            ).toString()}
+                          </span>
+                        </span>
+                        <span>
+                          <span className="text-muted-foreground">Invoice date </span>
+                          <span className="text-foreground">
+                            {selectedProforma.invoice_date || "—"}
+                          </span>
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        Read-only. New orders get the next DE-###### after the highest reference already
+                        in the database.
+                      </p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -4578,7 +5243,7 @@ const OilsPage = () => {
                   <div className="rounded-md border border-border/60 p-3">
                     <div className="text-muted-foreground">Supplier</div>
                     <div className="font-semibold text-foreground">
-                      {selectedProforma.customer_name || "—"}
+                      {selectedProformaSupplier}
                     </div>
                   </div>
                   </div>
@@ -4694,17 +5359,17 @@ const OilsPage = () => {
                       )}
 
                       {/* Helper to render extras by kind */}
-                      {(["bottle", "print_fee", "ethanol", "pump", "cap"] as const).map(
+                      {(["bottle", "ethanol", "pump", "cap", "print_fee"] as const).map(
                         (kind) => {
                           const titleMap: Record<
                             typeof kind,
                             string
                           > = {
                             bottle: "Fragrance bottles",
-                            print_fee: "Print fees",
                             ethanol: "Scentech Ethanol",
                             pump: "Perfume pumps",
                             cap: "Perfume caps",
+                            print_fee: "Extras",
                           };
 
                           const rows = selectedProformaExtras
