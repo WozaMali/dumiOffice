@@ -86,6 +86,7 @@ const Accounting = () => {
   const [clearLedgerScope, setClearLedgerScope] = useState<"range" | "all">("range");
   const [accountingTab, setAccountingTab] = useState<"ledger" | "expenses">("ledger");
   const deSyncInFlightRef = useRef(false);
+  const DE_DUPLICATE_CLEANUP_FLAG = "accounting_de_duplicate_cleanup_done_v1";
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -129,16 +130,76 @@ const Accounting = () => {
     const normalizeRef = (value: string | null | undefined) => (value || "").trim().toLowerCase();
     const isDeRef = (value: string | null | undefined) => /^de-\d{6}$/i.test((value || "").trim());
 
+    const deTransactionGroups = transactions.reduce<Map<string, AccountingTransaction[]>>((acc, tx) => {
+      const ref = normalizeRef(tx.reference);
+      if (!isDeRef(ref)) return acc;
+      const list = acc.get(ref) ?? [];
+      list.push(tx);
+      acc.set(ref, list);
+      return acc;
+    }, new Map());
+
+    const duplicateTransactionIds: string[] = [];
+    deTransactionGroups.forEach((group) => {
+      if (group.length <= 1) return;
+      const sorted = [...group].sort((a, b) => {
+        const aTs = new Date(a.created_at || 0).getTime();
+        const bTs = new Date(b.created_at || 0).getTime();
+        return aTs - bTs;
+      });
+      const toDelete = sorted.slice(1).map((tx) => tx.id);
+      duplicateTransactionIds.push(...toDelete);
+    });
+
+    const cleanupAlreadyDone =
+      typeof window !== "undefined" &&
+      window.localStorage.getItem(DE_DUPLICATE_CLEANUP_FLAG) === "true";
+
+    if (duplicateTransactionIds.length && !cleanupAlreadyDone) {
+      deSyncInFlightRef.current = true;
+      (async () => {
+        try {
+          for (const id of duplicateTransactionIds) {
+            await accountingApi.deleteTransaction(id);
+          }
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(DE_DUPLICATE_CLEANUP_FLAG, "true");
+          }
+          toast.success(
+            `Cleaned up ${duplicateTransactionIds.length} duplicate DE ledger entr${
+              duplicateTransactionIds.length === 1 ? "y" : "ies"
+            }.`,
+          );
+          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+        } catch (err) {
+          console.error("Failed removing duplicate DE ledger entries", err);
+          toast.error("Failed to clean duplicate DE ledger entries.");
+        } finally {
+          deSyncInFlightRef.current = false;
+        }
+      })();
+      return;
+    }
+
+    if (cleanupAlreadyDone) {
+      deSyncInFlightRef.current = false;
+    }
+
     const existingRefs = new Set(
       transactions
         .map((t) => normalizeRef(t.reference))
         .filter((r) => !!r),
     );
 
+    // Guard against duplicate proformas carrying the same DE reference.
+    // We only want one ledger insert per unique normalized reference.
+    const seenProformaRefs = new Set<string>();
     const missingProformas = scentProformas.filter((pf) => {
       const ref = normalizeRef(pf.reference);
       if (!isDeRef(ref)) return false;
       if (existingRefs.has(ref)) return false;
+      if (seenProformaRefs.has(ref)) return false;
+      seenProformaRefs.add(ref);
       return true;
     });
 
@@ -148,6 +209,9 @@ const Accounting = () => {
     (async () => {
       try {
         for (const pf of missingProformas) {
+          const normalizedRef = normalizeRef(pf.reference);
+          if (!normalizedRef || existingRefs.has(normalizedRef)) continue;
+
           const txDate = (pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString();
           if (!txDate) continue;
 
@@ -161,6 +225,7 @@ const Accounting = () => {
             campaign: "DE Orders",
             created_by: "Admin",
           });
+          existingRefs.add(normalizedRef);
         }
         queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
       } catch (err) {

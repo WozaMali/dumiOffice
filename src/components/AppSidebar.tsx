@@ -38,9 +38,18 @@ const iconByRouteId: Record<OfficeRouteId, ComponentType<{ size?: number }>> = {
 interface AppSidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen?: boolean;
+  isMobile?: boolean;
+  onCloseMobile?: () => void;
 }
 
-const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
+const AppSidebar = ({
+  collapsed,
+  onToggle,
+  mobileOpen = false,
+  isMobile = false,
+  onCloseMobile,
+}: AppSidebarProps) => {
   const location = useLocation();
   const [displayName, setDisplayName] = useState<string>("Admin");
   const [roleLabel, setRoleLabel] = useState<string>("Manager");
@@ -80,32 +89,41 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
   }, []);
 
   return (
-    <motion.aside
-      initial={{ x: -20, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      className={`fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-sidebar-border/80 bg-sidebar/95 backdrop-blur-2xl ${
-        collapsed ? "w-16" : "w-64"
-      } transition-[width] duration-300`}
-    >
-      <div className="shrink-0 border-b border-sidebar-border/80 p-4">
+    <>
+      {isMobile && mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px]"
+          onClick={onCloseMobile}
+        />
+      )}
+      <motion.aside
+        initial={{ x: -20, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        className={`fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-sidebar-border/80 bg-sidebar/95 backdrop-blur-2xl ${
+          isMobile ? "w-72" : collapsed ? "w-16" : "w-64"
+        } ${isMobile ? (mobileOpen ? "translate-x-0" : "-translate-x-full") : "translate-x-0"} transition-[width,transform] duration-300`}
+      >
+        <div className="shrink-0 border-b border-sidebar-border/80 p-4">
         <div className="mb-4 flex items-center">
-          {!collapsed && (
+          {(!collapsed || isMobile) && (
             <div className="flex flex-1 items-center justify-center">
               <img src="/Untitled-1.png" alt="" className="h-10 w-auto" />
             </div>
           )}
           <button
             type="button"
-            onClick={onToggle}
+            onClick={isMobile ? onCloseMobile : onToggle}
             className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-full border border-sidebar-border bg-sidebar-accent/60 text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
           >
-            {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            {isMobile ? <ChevronLeft size={14} /> : collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
           </button>
         </div>
         {/* Removed extra promo block to keep sidebar copy minimal */}
-      </div>
+        </div>
 
-      <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden p-4">
+        <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden p-4">
         {dumiOfficeConfig.routes.map((route) => {
           const Icon = iconByRouteId[route.id];
           const isActive = location.pathname === route.path;
@@ -113,10 +131,13 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
             <NavLink
               key={route.path}
               to={route.path}
+              onClick={() => {
+                if (isMobile) onCloseMobile?.();
+              }}
               className={`sidebar-link ${isActive ? "sidebar-link-active gold-glow" : "hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"} ${
-                collapsed ? "justify-center" : ""
+                collapsed && !isMobile ? "justify-center" : ""
               }`}
-              title={collapsed ? route.label : route.description}
+              title={collapsed && !isMobile ? route.label : route.description}
             >
               {Icon && (
                 <span
@@ -129,7 +150,7 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
                   <Icon size={18} />
                 </span>
               )}
-              {!collapsed && (
+              {(!collapsed || isMobile) && (
                 <div className="min-w-0">
                   <span className="block text-sm font-medium">{route.label}</span>
                   <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
@@ -140,22 +161,23 @@ const AppSidebar = ({ collapsed, onToggle }: AppSidebarProps) => {
             </NavLink>
           );
         })}
-      </nav>
+        </nav>
 
-      <div className="shrink-0 border-t border-sidebar-border/80 p-4">
+        <div className="shrink-0 border-t border-sidebar-border/80 p-4">
         <div className="flex items-center gap-3 rounded-[1.25rem] border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full border border-primary/30 bg-primary/12">
             <span className="text-xs font-semibold tracking-[0.18em] text-primary">DE</span>
           </div>
-          {!collapsed && (
+          {(!collapsed || isMobile) && (
             <div className="flex-1 min-w-0">
               <p className="truncate text-sm font-medium text-foreground">{displayName}</p>
               <p className="text-xs text-muted-foreground">{roleLabel}</p>
             </div>
           )}
         </div>
-      </div>
-    </motion.aside>
+        </div>
+      </motion.aside>
+    </>
   );
 };
 

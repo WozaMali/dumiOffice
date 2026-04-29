@@ -341,12 +341,16 @@
   }
 
   .data-shell {
-    @apply overflow-hidden rounded-[1.5rem] border;
+    @apply overflow-x-auto overflow-y-hidden rounded-[1.5rem] border;
     border-color: hsl(var(--glass-border));
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.025) 0%, rgba(255, 255, 255, 0) 100%),
       rgba(10, 10, 10, 0.78);
     box-shadow: 0 30px 80px -52px rgba(0, 0, 0, 0.98);
+  }
+
+  .data-shell table {
+    min-width: 880px;
   }
 
   .data-shell thead tr {
