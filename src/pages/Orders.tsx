@@ -90,6 +90,28 @@ const Orders = () => {
     queryKey: ["products"],
     queryFn: productsApi.list,
   });
+  const { data: orderItemCountByOrderId = {} } = useQuery<Record<string, number>>({
+    queryKey: ["orderItemCountByOrderId", orders.map((o) => o.id).join(",")],
+    enabled: orders.length > 0,
+    queryFn: async () => {
+      const orderIds = Array.from(new Set(orders.map((o) => o.id).filter(Boolean)));
+      if (orderIds.length === 0) return {};
+
+      const { data, error } = await supabase
+        .from("order_items")
+        .select("order_id, quantity")
+        .in("order_id", orderIds);
+      if (error) throw error;
+
+      const result: Record<string, number> = {};
+      ((data as Array<{ order_id?: string | null; quantity?: number | null }> | null) ?? []).forEach((row) => {
+        const orderId = (row.order_id || "").trim();
+        if (!orderId) return;
+        result[orderId] = (result[orderId] ?? 0) + Number(row.quantity || 0);
+      });
+      return result;
+    },
+  });
   const { data: popByOfficeOrderId = {} } = useQuery<Record<string, OfficeOrderPopInfo>>({
     queryKey: ["officeOrderPopLinks", orders.map((o) => o.id).join(",")],
     enabled: orders.length > 0,
@@ -1378,7 +1400,7 @@ Status: ${order.status} (${order.stage})`;
                       {order.id.slice(0, 8)}
                     </td>
                     <td className="px-2 py-2 text-[11px] text-foreground truncate">
-                      {orderItems.length > 0 ? `${orderItems.length} items` : "—"}
+                      {orderItemCountByOrderId[order.id] > 0 ? `${orderItemCountByOrderId[order.id]} items` : "—"}
                     </td>
                     <td className="px-2 py-2">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusPill[order.status]}`}>
