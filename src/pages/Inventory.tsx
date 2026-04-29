@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
-import { Package, AlertTriangle, Search, ArrowUpDown, Edit, Download, CheckCircle2, XCircle, RefreshCw, Target } from "lucide-react";
+import { Package, AlertTriangle, Search, ArrowUpDown, Edit, Download, CheckCircle2, XCircle, RefreshCw, Target, ShoppingCart } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { productsApi } from "@/lib/api/products";
 import { inventoryApi } from "@/lib/api/inventory";
@@ -15,6 +15,7 @@ import type { Product, ProductCategory, ScentProduct } from "@/types/database";
 import { toast } from "sonner";
 import { downloadCSV, generateProductsCSV } from "@/lib/utils/bulk-actions";
 import { generateInventoryPDF } from "@/lib/utils/inventory-pdf";
+import { supabase } from "@/lib/supabase";
 
 const Inventory = () => {
   const queryClient = useQueryClient();
@@ -27,6 +28,69 @@ const Inventory = () => {
     queryKey: ["scentProducts"],
     queryFn: fragranceApi.listScentProducts,
   });
+  const { data: soldToDateByProductId = {} } = useQuery<Record<string, number>>({
+    queryKey: ["inventorySoldToDateFromOrders"],
+    queryFn: async () => {
+      const { data: soldOrders, error: soldOrdersError } = await supabase
+        .from("orders")
+        .select("id")
+        .not("status", "in", "(Cancelled,Returned)");
+      if (soldOrdersError) throw soldOrdersError;
+
+      const orderIds =
+        ((soldOrders as Array<{ id?: string }> | null) ?? [])
+          .map((o) => (o.id || "").trim())
+          .filter(Boolean);
+      if (orderIds.length === 0) return {};
+
+      const { data: rows, error: rowsError } = await supabase
+        .from("order_items")
+        .select("product_id, sku, product_name, quantity")
+        .in("order_id", orderIds);
+      if (rowsError) throw rowsError;
+
+      const normalizeKey = (value: string) =>
+        value
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "");
+
+      // Your rule: Orders SKU = Inventory DE Name.
+      const byName = new Map(
+        items
+          .filter((p) => !!p.product_name)
+          .map((p) => [normalizeKey(p.product_name), p.id]),
+      );
+      const soldToDate: Record<string, number> = {};
+
+      ((rows as Array<{ product_id?: string | null; sku?: string | null; product_name?: string | null; quantity?: number | null }> | null) ?? []).forEach(
+        (row) => {
+          const qty = Number(row.quantity || 0);
+          if (!Number.isFinite(qty) || qty <= 0) return;
+
+          let productId = (row.product_id || "").trim();
+          if (!productId) {
+            const skuKey = normalizeKey(row.sku || "");
+            if (skuKey) productId = byName.get(skuKey) || "";
+          }
+          if (!productId) {
+            const nameKey = normalizeKey(row.product_name || "");
+            if (nameKey) productId = byName.get(nameKey) || "";
+          }
+          if (!productId) return;
+
+          soldToDate[productId] = (soldToDate[productId] ?? 0) + qty;
+        },
+      );
+
+      return soldToDate;
+    },
+    enabled: items.length > 0,
+  });
+
+  const getStockToDate = (item: Product) => Math.max(0, Number(item.stock_on_hand || 0));
+  const getSoldToDate = (item: Product) => Math.max(0, Number(soldToDateByProductId[item.id] ?? 0));
+  const getInStockNow = (item: Product) => Math.max(0, getStockToDate(item) - getSoldToDate(item));
 
   const [search, setSearch] = useState("");
   const STORAGE_KEY_DRAFT = "dumi-inventory-adjustment-draft";
@@ -94,9 +158,14 @@ const Inventory = () => {
   });
 
   const totalProducts = items.length;
-  const totalUnits = items.reduce((sum, item) => sum + item.stock_on_hand, 0);
-  const lowStockCount = items.filter((item) => item.stock_on_hand <= item.stock_threshold).length;
-  const outOfStockCount = items.filter((item) => item.stock_on_hand === 0).length;
+  const totalUnitsStockToDate = items.reduce((sum, item) => sum + getStockToDate(item), 0);
+  const totalUnitsInStockNow = items.reduce((sum, item) => sum + getInStockNow(item), 0);
+  const totalUnitsSold = useMemo(
+    () => Object.values(soldToDateByProductId).reduce((sum, v) => sum + Number(v || 0), 0),
+    [soldToDateByProductId],
+  );
+  const lowStockCount = items.filter((item) => getInStockNow(item) <= item.stock_threshold).length;
+  const outOfStockCount = items.filter((item) => getInStockNow(item) === 0).length;
 
   const filteredItems = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -107,7 +176,7 @@ const Inventory = () => {
       }
 
       // Status filter
-      const isLow = item.stock_on_hand <= item.stock_threshold;
+      const isLow = getInStockNow(item) <= item.stock_threshold;
       if (statusFilter === "inStock" && (isLow || !item.is_active)) {
         return false;
       }
@@ -124,7 +193,7 @@ const Inventory = () => {
         field.toLowerCase().includes(term),
       );
     });
-  }, [items, search, categoryFilter, statusFilter]);
+  }, [items, search, categoryFilter, statusFilter, soldToDateByProductId]);
 
   const paginatedItems = useMemo(() => {
     const start = page * pageSize;
@@ -431,7 +500,9 @@ const Inventory = () => {
                 variant="outline"
                 onClick={async () => {
                   try {
-                    await generateInventoryPDF(filteredItems);
+                    await generateInventoryPDF(filteredItems, {
+                      soldToDateByProductId,
+                    });
                     toast.success("Inventory PDF exported.");
                   } catch (err: unknown) {
                     toast.error((err as Error)?.message || "Failed to export PDF");
@@ -462,7 +533,7 @@ const Inventory = () => {
 
         {/* Overview metrics */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs flex-1 min-w-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 text-xs flex-1 min-w-0">
             <div className="metric-card">
               <span className="metric-label">Total products</span>
               <span className="metric-value flex items-center gap-2">
@@ -472,12 +543,28 @@ const Inventory = () => {
               <span className="metric-note">Active SKUs</span>
             </div>
             <div className="metric-card">
-              <span className="metric-label">Total units</span>
+              <span className="metric-label">In stock now</span>
               <span className="metric-value flex items-center gap-2">
                 <Target className="h-4 w-4 text-primary" />
-                {totalUnits}
+                {totalUnitsInStockNow}
               </span>
-              <span className="metric-note">In inventory</span>
+              <span className="metric-note">Stock to date minus sold</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">Sold to date</span>
+              <span className="metric-value flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4 text-primary" />
+                {totalUnitsSold}
+              </span>
+              <span className="metric-note">Includes committed sales (awaiting POP)</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">Stock to date</span>
+              <span className="metric-value flex items-center gap-2">
+                <Target className="h-4 w-4 text-primary" />
+                {totalUnitsStockToDate}
+              </span>
+              <span className="metric-note">Configured baseline</span>
             </div>
             <div className="metric-card">
               <span className="metric-label">Low stock alerts</span>
@@ -891,7 +978,7 @@ const Inventory = () => {
                 <div className="space-y-2">
                   <Label>Current stock</Label>
                   <p className="text-foreground">
-                    {adjustingProduct.stock_on_hand} units
+                    {getInStockNow(adjustingProduct)} units
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -928,6 +1015,7 @@ const Inventory = () => {
                     defaultValue="correction"
                   >
                     <option value="count">Stock count</option>
+                    <option value="new_stock">New Stock</option>
                     <option value="damage">Damage</option>
                     <option value="theft">Theft / loss</option>
                     <option value="sample">Tester / sample</option>
@@ -1016,7 +1104,9 @@ const Inventory = () => {
             size="sm"
             onClick={async () => {
               try {
-                await generateInventoryPDF(filteredItems);
+                await generateInventoryPDF(filteredItems, {
+                  soldToDateByProductId,
+                });
                 toast.success("Inventory PDF exported.");
               } catch (err: unknown) {
                 toast.error((err as Error)?.message || "Failed to export PDF");
@@ -1108,7 +1198,7 @@ const Inventory = () => {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                {["DE Name", "Brand", "Item", "Inspired By", "Designer", "Price", "Stock", "Status", "Actions"].map(
+                {["DE Name", "Brand", "Item", "Inspired By", "Designer", "Price", "Stock to date", "Sold to date", "In stock now", "Status", "Actions"].map(
                   (h) => (
                     <th
                       key={h}
@@ -1137,7 +1227,10 @@ const Inventory = () => {
                 </tr>
               ) : (
                 paginatedItems.map((item, i) => {
-                  const isLow = item.stock_on_hand <= item.stock_threshold;
+                  const stockToDate = getStockToDate(item);
+                  const soldToDate = getSoldToDate(item);
+                  const inStockNow = getInStockNow(item);
+                  const isLow = inStockNow <= item.stock_threshold;
                   return (
                     <motion.tr
                       key={item.id}
@@ -1166,14 +1259,18 @@ const Inventory = () => {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <span className={`text-sm font-medium ${isLow ? "text-destructive" : "text-foreground"}`}>{item.stock_on_hand}</span>
+                          <span className={`text-sm font-medium ${isLow ? "text-destructive" : "text-foreground"}`}>{stockToDate}</span>
                           <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full ${isLow ? "bg-destructive" : "bg-success"}`}
-                              style={{ width: `${Math.min((item.stock_on_hand / (item.stock_threshold * 3 || 1)) * 100, 100)}%` }}
+                              style={{ width: `${Math.min((inStockNow / (item.stock_threshold * 3 || 1)) * 100, 100)}%` }}
                             />
                           </div>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-amber-300">{soldToDate}</td>
+                      <td className={`px-6 py-4 text-sm font-semibold ${isLow ? "text-destructive" : "text-foreground"}`}>
+                        {inStockNow}
                       </td>
                       <td className="px-6 py-4">
                         <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${isLow ? "bg-destructive/20 text-destructive" : "bg-success/20 text-success"}`}>

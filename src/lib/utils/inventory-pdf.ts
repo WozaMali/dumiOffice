@@ -8,10 +8,10 @@ const loadImage = (src: string): Promise<HTMLImageElement | null> =>
     img.onerror = () => resolve(null);
   });
 
-function getStatus(p: Product): string {
+function getStatus(p: Product, inStockNow: number): string {
   if (!p.is_active) return "Inactive";
-  if (p.stock_on_hand === 0) return "Out of stock";
-  if (p.stock_on_hand <= p.stock_threshold) return "Low stock";
+  if (inStockNow === 0) return "Out of stock";
+  if (inStockNow <= p.stock_threshold) return "Low stock";
   return "In stock";
 }
 
@@ -55,9 +55,15 @@ function getInventoryGroup(p: Product): { key: string; label: string } {
 const truncate = (s: string, maxLen: number) =>
   s.length > maxLen ? s.slice(0, Math.max(0, maxLen - 2)) + ".." : s;
 
-export async function generateInventoryPDF(products: Product[]): Promise<void> {
+export async function generateInventoryPDF(
+  products: Product[],
+  options?: {
+    soldToDateByProductId?: Record<string, number>;
+  },
+): Promise<void> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ orientation: "landscape" });
+  const soldToDateByProductId = options?.soldToDateByProductId ?? {};
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -135,14 +141,17 @@ export async function generateInventoryPDF(products: Product[]): Promise<void> {
 
   // Column model: fixed boundaries so text never overlaps.
   const colModelDesired = [
-    { key: "product_name", label: "DE NAME", width: 175, align: "left" as const, maxLen: 20 },
-    { key: "brand", label: "BRAND", width: 95, align: "left" as const, maxLen: 12 },
-    { key: "item", label: "ITEM", width: 105, align: "left" as const, maxLen: 14 },
-    { key: "inspired_by", label: "INSPIRED BY", width: 140, align: "left" as const, maxLen: 16 },
-    { key: "designer", label: "DESIGNER", width: 95, align: "left" as const, maxLen: 10 },
-    { key: "price", label: "PRICE", width: 75, align: "right" as const, maxLen: 16 },
-    { key: "stock_on_hand", label: "STOCK", width: 55, align: "right" as const, maxLen: 8 },
-    { key: "status", label: "STATUS", width: 80, align: "right" as const, maxLen: 14 },
+    { key: "product_name", label: "DE NAME", width: 155, align: "left" as const, maxLen: 18 },
+    { key: "brand", label: "BRAND", width: 88, align: "left" as const, maxLen: 10 },
+    { key: "item", label: "ITEM", width: 88, align: "left" as const, maxLen: 12 },
+    { key: "inspired_by", label: "INSPIRED BY", width: 122, align: "left" as const, maxLen: 14 },
+    { key: "designer", label: "DESIGNER", width: 92, align: "left" as const, maxLen: 10 },
+    { key: "price", label: "PRICE", width: 70, align: "right" as const, maxLen: 12 },
+    // Keep wording short in compact PDF table to avoid overlap.
+    { key: "stock_to_date", label: "STOCK DATE", width: 86, align: "right" as const, maxLen: 10 },
+    { key: "sold_to_date", label: "SOLD DATE", width: 82, align: "right" as const, maxLen: 10 },
+    { key: "in_stock_now", label: "IN STOCK", width: 82, align: "right" as const, maxLen: 10 },
+    { key: "status", label: "STATUS", width: 92, align: "right" as const, maxLen: 12 },
   ];
 
   const scale = tableWidth / colModelDesired.reduce((sum, c) => sum + c.width, 0);
@@ -161,7 +170,7 @@ export async function generateInventoryPDF(products: Product[]): Promise<void> {
     doc.setFillColor(20, 20, 20);
     doc.rect(margin, headerYTop - 4, tableWidth, headerHeight, "F");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
+    doc.setFontSize(7);
     doc.setTextColor(255, 255, 255);
 
     // Header text baseline
@@ -273,7 +282,10 @@ export async function generateInventoryPDF(products: Product[]): Promise<void> {
       }
 
       const priceNum = p.price ?? p.base_price ?? 0;
-      const status = getStatus(p);
+      const stockToDate = Math.max(0, Number(p.stock_on_hand ?? 0));
+      const soldToDate = Math.max(0, Number(soldToDateByProductId[p.id] ?? 0));
+      const inStockNow = Math.max(0, stockToDate - soldToDate);
+      const status = getStatus(p, inStockNow);
 
       // Ensure row text is visible (header sets this to white).
       doc.setTextColor(40, 40, 40);
@@ -301,8 +313,14 @@ export async function generateInventoryPDF(products: Product[]): Promise<void> {
             text = `R${priceNum.toFixed(2)}`;
             text = truncate(text, c.maxLen);
             break;
-          case "stock_on_hand":
-            text = truncate(String(p.stock_on_hand ?? 0), c.maxLen);
+          case "stock_to_date":
+            text = truncate(String(stockToDate), c.maxLen);
+            break;
+          case "sold_to_date":
+            text = truncate(String(soldToDate), c.maxLen);
+            break;
+          case "in_stock_now":
+            text = truncate(String(inStockNow), c.maxLen);
             break;
           case "status":
             text = truncate(status, c.maxLen);

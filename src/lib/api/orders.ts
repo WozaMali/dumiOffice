@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { Order, OrderItem, OrderStatusHistory } from "@/types/database";
+import type { Product } from "@/types/database";
 
 function extractUuidFromWebRef(value?: string | null): string | null {
   if (!value) return null;
@@ -47,6 +48,111 @@ async function resolveStoreOrderIdForOfficeOrder(order: Order): Promise<string |
     }))
     .sort((a, b) => a.amountDiff - b.amountDiff || a.timeDiff - b.timeDiff)[0]?.c;
   return best?.id ?? null;
+}
+
+async function adjustProductStockWithMovement(options: {
+  productId: string;
+  delta: number;
+  orderId?: string;
+  source: string;
+  reason: string;
+  reference?: string;
+  createdBy?: string;
+}): Promise<void> {
+  const { productId, delta, orderId, source, reason, reference, createdBy } = options;
+  if (!productId || !Number.isFinite(delta) || delta === 0) return;
+
+  const { data: product, error: productError } = await supabase
+    .from("products")
+    .select<"*", Product>("*")
+    .eq("id", productId)
+    .single();
+
+  if (productError || !product) {
+    throw productError || new Error("Product not found");
+  }
+
+  const stockBefore = Number(product.stock_on_hand ?? 0);
+  const stockAfter = stockBefore + delta;
+  if (stockAfter < 0) {
+    throw new Error(`Stock level cannot go below zero for product ${productId}`);
+  }
+
+  const { error: updateError } = await supabase
+    .from("products")
+    .update({
+      stock_on_hand: stockAfter,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", productId);
+  if (updateError) throw updateError;
+
+  const { error: movementError } = await supabase
+    .from("inventory_movements")
+    .insert({
+      product_id: productId,
+      order_id: orderId,
+      source,
+      reason,
+      quantity_delta: delta,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
+      reference,
+      created_by: createdBy,
+    });
+  if (movementError) throw movementError;
+}
+
+async function getOrderInventoryNetDelta(orderId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("inventory_movements")
+    .select("quantity_delta")
+    .eq("order_id", orderId)
+    .eq("source", "order");
+  if (error) throw error;
+  return ((data as Array<{ quantity_delta?: number }> | null) ?? []).reduce(
+    (sum, row) => sum + Number(row.quantity_delta || 0),
+    0,
+  );
+}
+
+async function resolveInventoryProductIdFromOrderItem(item: Pick<OrderItem, "product_id" | "sku" | "product_name">): Promise<string | null> {
+  const rawProductId = (item.product_id || "").trim();
+  if (rawProductId) {
+    const { data: byId } = await supabase
+      .from("products")
+      .select("id")
+      .eq("id", rawProductId)
+      .maybeSingle();
+    const id = (byId as { id?: string } | null)?.id;
+    if (id) return id;
+  }
+
+  const rawSku = (item.sku || "").trim();
+  if (rawSku) {
+    const { data: bySkuOrCode } = await supabase
+      .from("products")
+      .select("id")
+      .or(`sku.eq.${rawSku},code.eq.${rawSku}`)
+      .limit(1)
+      .maybeSingle();
+    const id = (bySkuOrCode as { id?: string } | null)?.id;
+    if (id) return id;
+  }
+
+  const rawName = (item.product_name || "").trim();
+  if (rawName) {
+    const { data: byName } = await supabase
+      .from("products")
+      .select("id")
+      .ilike("product_name", rawName)
+      .limit(1)
+      .maybeSingle();
+    const id = (byName as { id?: string } | null)?.id;
+    if (id) return id;
+  }
+
+  return null;
 }
 
 export const ordersApi = {
@@ -104,6 +210,56 @@ export const ordersApi = {
     const order = await this.getById(id);
     if (!order) throw new Error("Order not found");
 
+    const stockNetDelta = await getOrderInventoryNetDelta(id);
+
+    const shouldDeductStock =
+      (stage === "In Progress" || stage === "Completed") &&
+      order.status !== "Cancelled" &&
+      order.status !== "Returned" &&
+      stockNetDelta >= 0;
+
+    if (shouldDeductStock) {
+      const items = await orderItemsApi.listByOrderId(id);
+      for (const item of items) {
+        if (!Number.isFinite(item.quantity) || item.quantity <= 0) continue;
+        const resolvedProductId = await resolveInventoryProductIdFromOrderItem(item);
+        if (!resolvedProductId) continue;
+        await adjustProductStockWithMovement({
+          productId: resolvedProductId,
+          delta: -item.quantity,
+          orderId: id,
+          source: "order",
+          reason: `Stock deduction for order ${id}`,
+          reference: order.reference || id,
+          createdBy: changedBy || "system",
+        });
+      }
+    }
+
+    const shouldRestock =
+      (status === "Cancelled" || status === "Returned") &&
+      order.status !== "Cancelled" &&
+      order.status !== "Returned" &&
+      stockNetDelta < 0;
+
+    if (shouldRestock) {
+      const items = await orderItemsApi.listByOrderId(id);
+      for (const item of items) {
+        if (!Number.isFinite(item.quantity) || item.quantity <= 0) continue;
+        const resolvedProductId = await resolveInventoryProductIdFromOrderItem(item);
+        if (!resolvedProductId) continue;
+        await adjustProductStockWithMovement({
+          productId: resolvedProductId,
+          delta: item.quantity,
+          orderId: id,
+          source: "order",
+          reason: `Restock from ${status.toLowerCase()} order ${id}`,
+          reference: order.reference || id,
+          createdBy: changedBy || "system",
+        });
+      }
+    }
+
     await this.update(id, { status, stage });
 
     await supabase.from("order_status_history").insert({
@@ -118,6 +274,29 @@ export const ordersApi = {
   },
 
   async delete(id: string): Promise<void> {
+    const order = await this.getById(id);
+    if (!order) throw new Error("Order not found");
+
+    const stockNetDelta = await getOrderInventoryNetDelta(id);
+    if (stockNetDelta < 0) {
+      // Restock products from this order before deleting records.
+      const orderItems = await orderItemsApi.listByOrderId(id);
+      for (const item of orderItems) {
+        if (!Number.isFinite(item.quantity) || item.quantity <= 0) continue;
+        const resolvedProductId = await resolveInventoryProductIdFromOrderItem(item);
+        if (!resolvedProductId) continue;
+        await adjustProductStockWithMovement({
+          productId: resolvedProductId,
+          delta: item.quantity,
+          orderId: id,
+          source: "order",
+          reason: `Restock from deleted order ${id}`,
+          reference: order.reference || id,
+          createdBy: "system",
+        });
+      }
+    }
+
     // Cascade manually to avoid FK/RLS surprises.
     // 1) Delete accounting transactions linked to this order (and their attachments)
     const { data: txData, error: txIdsError } = await supabase

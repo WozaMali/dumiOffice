@@ -5,12 +5,13 @@ export const inventoryApi = {
   async adjustStock(options: {
     productId: string;
     delta: number;
+    orderId?: string;
     source: string;
     reason: string;
     reference?: string;
     createdBy?: string;
   }): Promise<InventoryMovement> {
-    const { productId, delta, source, reason, reference, createdBy } = options;
+    const { productId, delta, orderId, source, reason, reference, createdBy } = options;
 
     // Fetch current stock
     const { data: product, error: productError } = await supabase
@@ -48,6 +49,7 @@ export const inventoryApi = {
       .from("inventory_movements")
       .insert({
         product_id: productId,
+        order_id: orderId,
         source,
         reason,
         quantity_delta: delta,

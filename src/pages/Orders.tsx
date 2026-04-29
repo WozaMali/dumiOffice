@@ -69,6 +69,14 @@ type OfficeOrderPopInfo = {
   pop_uploaded_at: string | null;
 };
 
+const buildRequestedQuantityByProduct = (items: LineItem[]) =>
+  items.reduce<Record<string, number>>((acc, item) => {
+    const productId = (item.product_id || "").trim();
+    if (!productId) return acc;
+    acc[productId] = (acc[productId] ?? 0) + Number(item.quantity || 0);
+    return acc;
+  }, {});
+
 const Orders = () => {
   const queryClient = useQueryClient();
   const autoMarkedPaidRef = useRef<Set<string>>(new Set());
@@ -540,6 +548,7 @@ const Orders = () => {
               inventoryApi.adjustStock({
                 productId: item.product_id!,
                 delta: -item.quantity,
+                orderId: created.id,
                 source: "order",
                 reason: `Order ${created.id}`,
                 reference: created.reference,
@@ -616,6 +625,7 @@ const Orders = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["orderHistory"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
       toast.success("Order status updated");
     },
     onError: (err: any) => {
@@ -789,9 +799,12 @@ const Orders = () => {
     if (!product) return;
 
     const quantity = Number(currentLine.quantity) || 1;
-    
-    // Validate stock availability
-    const stockCheck = validateStockAvailability(quantity, product.stock_on_hand);
+
+    // Validate stock availability against existing lines of the same product.
+    const requestedAlready = lineItems
+      .filter((item) => item.product_id === product.id)
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const stockCheck = validateStockAvailability(quantity + requestedAlready, product.stock_on_hand);
     if (!stockCheck.valid) {
       toast.error(stockCheck.message);
       return;
@@ -911,6 +924,23 @@ const Orders = () => {
     const reference = `${channelRefPrefix[createForm.channel]}-${dateStamp}-${referenceSuffix}`;
 
     const totals = calculateTotals();
+
+    // Re-validate stock against latest inventory before creating order.
+    const latestProducts = await productsApi.list();
+    const latestById = new Map(latestProducts.map((p) => [p.id, p]));
+    const requestedByProduct = buildRequestedQuantityByProduct(lineItems);
+    for (const [productId, requestedQty] of Object.entries(requestedByProduct)) {
+      const product = latestById.get(productId);
+      if (!product) {
+        toast.error("One of the selected products no longer exists. Refresh and try again.");
+        return;
+      }
+      const stockCheck = validateStockAvailability(requestedQty, product.stock_on_hand);
+      if (!stockCheck.valid) {
+        toast.error(`${product.product_name}: ${stockCheck.message}`);
+        return;
+      }
+    }
 
     let resolvedCustomerId = prefilledCustomerId;
     if (!resolvedCustomerId && createForm.customerEmail.trim()) {
