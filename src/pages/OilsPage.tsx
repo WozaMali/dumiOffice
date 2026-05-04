@@ -35,6 +35,18 @@ type ScentRow = {
   qty100g: string;
 };
 
+/** Label text for Pro-Forma scent product options (native select, plain text only). */
+function formatScentProductOptionLabel(p: ScentProduct): string {
+  const brand = (p.brand || "Dumi Essence").trim();
+  const item = (p.item || "").trim() || "—";
+  const inspired = (p.inspired_by || "").trim();
+  const designer = (p.designer || "").trim();
+  let label = `${brand} – ${item}`;
+  if (inspired) label += ` · Inspired by: ${inspired}`;
+  if (designer) label += ` · Designer: ${designer}`;
+  return label;
+}
+
 const emptyRow: ScentRow = {
   brand: "Dumi Essence",
   item: "",
@@ -1028,7 +1040,7 @@ const OilsPage = () => {
         ...bottles
           .map((row) => {
             const totalAmount = amountValue(row.price, row.qty);
-            if (!row.name && !totalAmount) return null;
+            if (parseQty(row.qty) <= 0) return null;
             const specBits: string[] = [];
             if (row.ml) specBits.push(`${row.ml}ml`);
             if (row.code) specBits.push(`Code: ${row.code}`);
@@ -1047,7 +1059,7 @@ const OilsPage = () => {
         ...printFees
           .map((row) => {
             const totalAmount = amountValue(row.price, row.qty);
-            if (!row.name && !totalAmount) return null;
+            if (parseQty(row.qty) <= 0) return null;
             const specBits: string[] = [];
             if (row.colour) specBits.push(row.colour);
             if (row.type) specBits.push(row.type);
@@ -1064,7 +1076,7 @@ const OilsPage = () => {
         ...ethanolRows
           .map((row) => {
             const totalAmount = amountValue(row.price, row.qty);
-            if (!row.name && !totalAmount) return null;
+            if (parseQty(row.qty) <= 0) return null;
             const specBits: string[] = [];
             if (row.liters) specBits.push(`${row.liters}L`);
             return {
@@ -1080,7 +1092,7 @@ const OilsPage = () => {
         ...pumps
           .map((row) => {
             const totalAmount = amountValue(row.price, row.qty);
-            if (!row.name && !totalAmount) return null;
+            if (parseQty(row.qty) <= 0) return null;
             const specBits: string[] = [];
             if (row.ml) specBits.push(`${row.ml}ml`);
             if (row.code) specBits.push(`Code: ${row.code}`);
@@ -1098,7 +1110,7 @@ const OilsPage = () => {
         ...caps
           .map((row) => {
             const totalAmount = amountValue(row.price, row.qty);
-            if (!row.name && !totalAmount) return null;
+            if (parseQty(row.qty) <= 0) return null;
             const specBits: string[] = [];
             if (row.ml) specBits.push(`${row.ml}ml`);
             if (row.code) specBits.push(`Code: ${row.code}`);
@@ -1116,7 +1128,7 @@ const OilsPage = () => {
 
       if (!lines.length && !extras.length) {
         throw new Error(
-          "Add at least one scent line with quantity, or at least one bottle, extra, ethanol, pump, or cap line with an amount.",
+          "Add at least one scent line with quantity, or at least one bottle, extra, ethanol, pump, or cap line with a quantity.",
         );
       }
 
@@ -1645,8 +1657,15 @@ const OilsPage = () => {
         const qty1h = Number(line.qty_100g ?? 0) || 0;
         if (!qty1 && !qty5 && !qty2 && !qty1h) return null;
 
-        const rowTotalNum = Number(line.row_total ?? 0) || 0;
-        if (rowTotalNum <= 0) return null;
+        const sp = line.scent_products;
+        let rowTotalNum = Number(line.row_total ?? 0) || 0;
+        if (rowTotalNum <= 0 && sp) {
+          rowTotalNum =
+            amountValue(sp.price_1kg?.toString() ?? "", String(qty1)) +
+            amountValue(sp.price_500g?.toString() ?? "", String(qty5)) +
+            amountValue(sp.price_200g?.toString() ?? "", String(qty2)) +
+            amountValue(sp.price_100g?.toString() ?? "", String(qty1h));
+        }
 
         const sizeBits: string[] = [];
         if (qty1) sizeBits.push(`${qty1} × 1kg`);
@@ -1654,13 +1673,11 @@ const OilsPage = () => {
         if (qty2) sizeBits.push(`${qty2} × 200g`);
         if (qty1h) sizeBits.push(`${qty1h} × 100g`);
 
-        const brand = line.scent_products?.brand || "Dumi Essence";
-        const item = line.scent_products?.item || "—";
+        const brand = sp?.brand || "Dumi Essence";
+        const item = sp?.item || "—";
         const inspiredBits: string[] = [];
-        if (line.scent_products?.inspired_by)
-          inspiredBits.push(line.scent_products.inspired_by);
-        if (line.scent_products?.designer)
-          inspiredBits.push(line.scent_products.designer);
+        if (sp?.inspired_by) inspiredBits.push(sp.inspired_by);
+        if (sp?.designer) inspiredBits.push(sp.designer);
 
         return {
           c1: `${brand} – ${item}`,
@@ -1744,8 +1761,15 @@ const OilsPage = () => {
         const qty2 = Number(line.qty_200g ?? 0) || 0;
         const qty1h = Number(line.qty_100g ?? 0) || 0;
         if (!qty1 && !qty5 && !qty2 && !qty1h) return sum;
-        const rowTotal = Number(line.row_total ?? 0) || 0;
-        if (rowTotal <= 0) return sum;
+        let rowTotal = Number(line.row_total ?? 0) || 0;
+        const sp = line.scent_products;
+        if (rowTotal <= 0 && sp) {
+          rowTotal =
+            amountValue(sp.price_1kg?.toString() ?? "", String(qty1)) +
+            amountValue(sp.price_500g?.toString() ?? "", String(qty5)) +
+            amountValue(sp.price_200g?.toString() ?? "", String(qty2)) +
+            amountValue(sp.price_100g?.toString() ?? "", String(qty1h));
+        }
         return sum + rowTotal;
       },
       0,
@@ -2442,11 +2466,11 @@ const OilsPage = () => {
         scentRows,
       );
 
-      // 2) Bottles
+      // 2) Bottles — only rows with a chosen quantity (PDF matches what you are ordering).
       const bottleRows = bottles
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
-          if (!row.name && !totalAmount) return null;
+          if (toNumber(row.qty) <= 0) return null;
           const specBits: string[] = [];
           if (row.ml) specBits.push(`${row.ml}ml`);
           if (row.code) specBits.push(`Code: ${row.code}`);
@@ -2467,7 +2491,7 @@ const OilsPage = () => {
       const ethanolPdfRows = ethanolRows
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
-          if (!row.name && !totalAmount) return null;
+          if (toNumber(row.qty) <= 0) return null;
           const specBits: string[] = [];
           if (row.liters) specBits.push(`${row.liters}L`);
           return {
@@ -2489,7 +2513,7 @@ const OilsPage = () => {
       const pumpRows = pumps
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
-          if (!row.name && !totalAmount) return null;
+          if (toNumber(row.qty) <= 0) return null;
           const specBits: string[] = [];
           if (row.ml) specBits.push(`${row.ml}ml`);
           if (row.code) specBits.push(`Code: ${row.code}`);
@@ -2513,7 +2537,7 @@ const OilsPage = () => {
       const capRows = caps
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
-          if (!row.name && !totalAmount) return null;
+          if (toNumber(row.qty) <= 0) return null;
           const specBits: string[] = [];
           if (row.ml) specBits.push(`${row.ml}ml`);
           if (row.code) specBits.push(`Code: ${row.code}`);
@@ -2533,7 +2557,7 @@ const OilsPage = () => {
       const printRows = printFees
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
-          if (!row.name && !totalAmount) return null;
+          if (toNumber(row.qty) <= 0) return null;
           const specBits: string[] = [];
           if (row.colour) specBits.push(row.colour);
           if (row.type) specBits.push(row.type);
@@ -2924,8 +2948,8 @@ const OilsPage = () => {
                           seenKeys.add(key);
                           return (
                             <option key={p.id} value={i}>
-                          {p.brand} – {p.item}
-                        </option>
+                              {formatScentProductOptionLabel(p)}
+                            </option>
                           );
                         });
                       })()}
