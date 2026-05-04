@@ -1,0 +1,8 @@
+/* Full-bleed app shell. The Vite starter used max-width: 1280px + margin: auto on #root, which letterboxed the office UI. */
+#root {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100dvh;
+}
