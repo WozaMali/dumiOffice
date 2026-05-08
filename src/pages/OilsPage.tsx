@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import PageHero from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,15 @@ import type {
   ScentProduct,
   ScentProforma,
   ScentProformaExtraLine,
+  EssentialOilProduct,
   Vendor,
 } from "@/types/database";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+
+const IN_PROGRESS_SUFFIX = " (In progress)";
+const isInProgressProforma = (pf: Pick<ScentProforma, "name">) =>
+  (pf.name || "").toLowerCase().includes(IN_PROGRESS_SUFFIX.trim().toLowerCase());
 
 type ScentRow = {
   id?: string;
@@ -72,9 +77,42 @@ type ProFormaRow = {
   qty100g: string;
 };
 
+type EssentialOilCatalogRow = {
+  sku: string;
+  product: string;
+  size: string;
+  unitPrice: number;
+};
+
+type EssentialOilOrderRow = {
+  id: string;
+  productName: string | null;
+  sku: string | null;
+  qty: string;
+};
+
+const defaultEssentialOilCatalog: EssentialOilCatalogRow[] = [
+  { sku: "ESSALM100", product: "Almond Bitter Essential Oil", size: "100ml", unitPrice: 171 },
+  { sku: "ESSALM11", product: "Almond Bitter Essential Oil", size: "11ml", unitPrice: 49 },
+  { sku: "ESSALM1LT", product: "Almond Bitter Essential Oil", size: "1lt", unitPrice: 1204 },
+  { sku: "ESSALM22", product: "Almond Bitter Essential Oil", size: "22ml", unitPrice: 67 },
+  { sku: "ESSALM500", product: "Almond Bitter Essential Oil", size: "500ml", unitPrice: 648 },
+  { sku: "ESSALM55", product: "Almond Bitter Essential Oil", size: "50ml", unitPrice: 115 },
+  { sku: "ESSAMY100", product: "Amyris (West Indian Sandalwood)", size: "100ml", unitPrice: 622 },
+  { sku: "ESSAMY11", product: "Amyris (West Indian Sandalwood)", size: "11ml", unitPrice: 109 },
+  { sku: "ESSAMY1LT", product: "Amyris (West Indian Sandalwood)", size: "1lt", unitPrice: 5001 },
+  { sku: "ESSAMY22", product: "Amyris (West Indian Sandalwood)", size: "22ml", unitPrice: 176 },
+  { sku: "ESSAMY500", product: "Amyris (West Indian Sandalwood)", size: "500ml", unitPrice: 2665 },
+  { sku: "ESSAMY50", product: "Amyris (West Indian Sandalwood)", size: "50ml", unitPrice: 364 },
+  { sku: "ESSANI100", product: "Aniseed Essential Oil", size: "100ml", unitPrice: 171 },
+  { sku: "ESSANI11", product: "Aniseed Essential Oil", size: "11ml", unitPrice: 48 },
+  { sku: "ESSANI1LT", product: "Aniseed Essential Oil", size: "1lt", unitPrice: 1204 },
+  { sku: "ESSANI22", product: "Aniseed Essential Oil", size: "22ml", unitPrice: 67 },
+];
+
 const OilsPage = () => {
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "pro-forma" | "products" | "listed" | "proformas"
+    "dashboard" | "pro-forma" | "essential-oils" | "products" | "listed" | "in-progress" | "proformas"
   >("dashboard");
   const [productRows, setProductRows] = useState<ScentRow[]>([emptyRow]);
   const [proFormaRows, setProFormaRows] = useState<ProFormaRow[]>([]);
@@ -93,6 +131,26 @@ const OilsPage = () => {
   const [uvStickersAndTags, setUvStickersAndTags] = useState<
     { item: string; stickerCode: string; colour: string; shape: string; price: string; qty: string }
   >([{ item: "", stickerCode: "", colour: "", shape: "", price: "", qty: "" }]);
+  const { data: essentialOilProducts = [] } = useQuery<EssentialOilProduct[]>({
+    queryKey: ["essentialOilProducts"],
+    queryFn: fragranceApi.listEssentialOilProducts,
+  });
+
+  const essentialOilCatalog: EssentialOilCatalogRow[] = useMemo(() => {
+    if (essentialOilProducts.length) {
+      return essentialOilProducts.map((p) => ({
+        sku: p.sku,
+        product: p.product,
+        size: p.size,
+        unitPrice: Number(p.unit_price ?? 0) || 0,
+      }));
+    }
+    return defaultEssentialOilCatalog;
+  }, [essentialOilProducts]);
+  const [essentialOilRows, setEssentialOilRows] = useState<EssentialOilOrderRow[]>([
+    { id: "eo-init", productName: null, sku: null, qty: "" },
+  ]);
+  const [essentialOilSearch, setEssentialOilSearch] = useState("");
   const [scentSearch, setScentSearch] = useState("");
   const [ethanolRows, setEthanolRows] = useState<
     { id?: string; name: string; liters: string; price: string; qty: string }
@@ -204,6 +262,10 @@ const OilsPage = () => {
       return;
     }
 
+    const isEssentialOilsDoc = (selectedProforma?.name || "")
+      .toLowerCase()
+      .includes("essential oils purchase");
+
     setBottles([
       { id: undefined, name: "", ml: "", code: "", colour: "", shape: "", price: "", qty: "" },
     ]);
@@ -216,7 +278,7 @@ const OilsPage = () => {
     ]);
     setEthanolRows([{ id: undefined, name: "", liters: "", price: "", qty: "" }]);
 
-    if (hasLines) {
+    if (!isEssentialOilsDoc && hasLines) {
       const mappedRows: ProFormaRow[] = selectedProformaLines.map(
         (line: any, index: number) => {
           const productIndex = scentProducts.findIndex(
@@ -245,11 +307,33 @@ const OilsPage = () => {
         },
       );
       setProFormaRows(mappedRows);
-    } else {
+    } else if (!isEssentialOilsDoc) {
       setProFormaRows([]);
     }
 
-    if (hasExtras) {
+    if (isEssentialOilsDoc) {
+      const oils = selectedProformaExtras
+        .filter((e) => e.kind === "print_fee")
+        .filter((e) => (e.name || "").toLowerCase().startsWith("essential oil -"))
+        .map((e, index) => {
+          const spec = e.spec || "";
+          const skuMatch = spec.match(/sku:\s*([a-z0-9_-]+)/i);
+          const sku = skuMatch ? skuMatch[1].toUpperCase() : null;
+          const variant = sku ? essentialOilCatalog.find((v) => v.sku === sku) : null;
+          const fallbackName =
+            (e.name || "")
+              .replace(/^Essential Oil\s*-\s*/i, "")
+              .trim() || null;
+          return {
+            id: `eo-edit-${e.id ?? index}`,
+            productName: variant?.product ?? fallbackName,
+            sku: variant?.sku ?? sku,
+            qty: e.qty != null ? String(e.qty) : "",
+          } satisfies EssentialOilOrderRow;
+        });
+      setEssentialOilRows(oils.length ? oils : [{ id: "eo-init", productName: null, sku: null, qty: "" }]);
+      setActiveTab("essential-oils");
+    } else if (hasExtras) {
       const bottleExtras = selectedProformaExtras.filter((e) => e.kind === "bottle");
       if (bottleExtras.length) {
         setBottles(
@@ -361,7 +445,9 @@ const OilsPage = () => {
     }
 
     proformaEditHydratedForIdRef.current = editingProformaId;
-    setActiveTab("pro-forma");
+    if (!isEssentialOilsDoc) {
+      setActiveTab("pro-forma");
+    }
   }, [
     editingProformaId,
     selectedProformaId,
@@ -374,6 +460,7 @@ const OilsPage = () => {
     pumpProducts,
     capProducts,
     ethanolProducts,
+    essentialOilCatalog,
   ]);
 
   useEffect(() => {
@@ -928,6 +1015,107 @@ const OilsPage = () => {
     reader.readAsText(file);
   };
 
+  const handleEssentialOilsCsv = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (!lines.length) return;
+
+      const stripQuotes = (value: string) =>
+        value.startsWith('"') && value.endsWith('"')
+          ? value.slice(1, -1)
+          : value;
+
+      const normalizeHeader = (value: string) =>
+        stripQuotes(value)
+          .replace(/^\ufeff/, "")
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, " ");
+
+      const parseMoney = (value: string) => {
+        const cleaned = value
+          .replace(/\s/g, "")
+          .replace(/^r/i, "")
+          .replace(/[^0-9,.-]/g, "")
+          .replace(/\./g, "")
+          .replace(",", ".");
+        const amount = Number(cleaned);
+        return Number.isFinite(amount) ? amount : 0;
+      };
+
+      const headerRaw = lines[0];
+      const delimiter = headerRaw.includes("\t")
+        ? "\t"
+        : headerRaw.includes(";")
+          ? ";"
+          : ",";
+      const headers = headerRaw.split(delimiter).map((h) => normalizeHeader(h));
+
+      const indexOfHeader = (...candidates: string[]) =>
+        candidates
+          .map((c) => headers.indexOf(normalizeHeader(c)))
+          .find((i) => i >= 0) ?? -1;
+
+      const skuIdx = indexOfHeader("sku");
+      const productIdx = indexOfHeader("product", "item", "oil", "essential oil");
+      const priceIdx = indexOfHeader("price", "unit price");
+      const sizeIdx = indexOfHeader("size", "volume");
+
+      if (skuIdx < 0 || productIdx < 0 || priceIdx < 0 || sizeIdx < 0) {
+        toast.error("Essential oils CSV must include headers: SKU, Product, Price, Size.");
+        event.target.value = "";
+        return;
+      }
+
+      const imported: EssentialOilCatalogRow[] = lines
+        .slice(1)
+        .map((line) => line.split(delimiter).map((cell) => stripQuotes(cell.trim())))
+        .map((cols) => ({
+          sku: (cols[skuIdx] || "").trim(),
+          product: (cols[productIdx] || "").trim(),
+          size: (cols[sizeIdx] || "").trim(),
+          unitPrice: parseMoney(cols[priceIdx] || ""),
+        }))
+        .filter((row) => row.sku && row.product && row.size && row.unitPrice > 0);
+
+      if (!imported.length) {
+        toast.error("No valid essential oil rows found in CSV.");
+        event.target.value = "";
+        return;
+      }
+
+      upsertEssentialOilsCatalogMutation.mutate(imported);
+      event.target.value = "";
+    };
+    reader.readAsText(file);
+  };
+
+  const upsertEssentialOilsCatalogMutation = useMutation({
+    mutationFn: async (rows: EssentialOilCatalogRow[]) =>
+      fragranceApi.upsertEssentialOilProducts(
+        rows.map((r) => ({
+          sku: r.sku,
+          product: r.product,
+          size: r.size,
+          unit_price: r.unitPrice,
+        })),
+      ),
+    onSuccess: () => {
+      toast.success("Essential oils list saved");
+      queryClient.invalidateQueries({ queryKey: ["essentialOilProducts"] });
+      setEssentialOilRows([{ id: "eo-init", productName: null, sku: null, qty: "" }]);
+    },
+    onError: (err: any) =>
+      toast.error(err.message || "Failed to save essential oils list"),
+  });
+
   const calcAmount = (price: string, qty: string) => {
     const total = amountValue(price, qty);
     if (!total) return "";
@@ -970,7 +1158,6 @@ const OilsPage = () => {
     (sum, row) => sum + amountValue(row.price, row.qty),
     0,
   );
-
   const subtotal =
     scentsSubtotal +
     bottlesSubtotal +
@@ -1134,6 +1321,7 @@ const OilsPage = () => {
 
       if (editingProformaId) {
         const header = await fragranceApi.updateProforma(editingProformaId, {
+          name: "Fragrance purchase",
           customer_name: selectedVendorName,
           vendor_id: selectedVendorId || null,
           proforma_date: proformaDate || null,
@@ -1149,7 +1337,7 @@ const OilsPage = () => {
             extras,
           );
         return {
-          mode: "update" as const,
+          mode: "create" as const,
           header,
           lines: outLines,
           extras: outExtras,
@@ -1185,22 +1373,9 @@ const OilsPage = () => {
       return { mode: "create" as const, ...created };
     },
     onSuccess: async (result) => {
-      if (result.mode === "update") {
-        toast.success("Pro-forma saved");
-        skipBottleCatalogFillOnceRef.current = true;
-        skipPumpCatalogFillOnceRef.current = true;
-        skipCapCatalogFillOnceRef.current = true;
-        skipEthanolCatalogFillOnceRef.current = true;
-        setEditingProformaId(null);
-        proformaEditHydratedForIdRef.current = null;
-        queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
-        queryClient.invalidateQueries({ queryKey: ["scentProformaLines"] });
-        queryClient.invalidateQueries({ queryKey: ["scentProformaExtras"] });
-        return;
-      }
-
       toast.success("Order created from pro-forma");
       setEditingProformaId(null);
+      proformaEditHydratedForIdRef.current = null;
       const trimmedVendor = selectedVendorName.trim();
       if (trimmedVendor && result?.header?.reference) {
         try {
@@ -1232,10 +1407,444 @@ const OilsPage = () => {
       }
       queryClient.invalidateQueries({ queryKey: ["scentProducts"] });
       queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
+      queryClient.invalidateQueries({ queryKey: ["scentProformaLines"] });
+      queryClient.invalidateQueries({ queryKey: ["scentProformaExtras"] });
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to create order");
     },
+  });
+
+  const saveProformaInProgressMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedVendorId) {
+        throw new Error("Select a vendor before saving an order in progress.");
+      }
+
+      const toNumber = (value: string) => {
+        if (!value) return 0;
+        const cleaned = value.replace(/\s/g, "").replace(",", ".");
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+      };
+
+      const lines = proFormaRows
+        .map((pfRow) => {
+          const base =
+            pfRow.productIndex !== null
+              ? scentProducts[pfRow.productIndex]
+              : undefined;
+          if (!base) return null;
+
+          const qty_1kg = toNumber(pfRow.qty1kg);
+          const qty_500g = toNumber(pfRow.qty500g);
+          const qty_200g = toNumber(pfRow.qty200g);
+          const qty_100g = toNumber(pfRow.qty100g);
+
+          if (!qty_1kg && !qty_500g && !qty_200g && !qty_100g) {
+            return null;
+          }
+
+          const row_total =
+            amountValue(base.price_1kg?.toString() ?? "", pfRow.qty1kg) +
+            amountValue(base.price_500g?.toString() ?? "", pfRow.qty500g) +
+            amountValue(base.price_200g?.toString() ?? "", pfRow.qty200g) +
+            amountValue(base.price_100g?.toString() ?? "", pfRow.qty100g);
+
+          return {
+            scent_product_id: base.id,
+            qty_1kg,
+            qty_500g,
+            qty_200g,
+            qty_100g,
+            row_total,
+          };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
+
+      const parseQty = (value: string) => {
+        if (!value) return 0;
+        const cleaned = value.replace(/\s/g, "").replace(",", ".");
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+      };
+
+      const extras = [
+        ...bottles
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (parseQty(row.qty) <= 0) return null;
+            const specBits: string[] = [];
+            if (row.ml) specBits.push(`${row.ml}ml`);
+            if (row.code) specBits.push(`Code: ${row.code}`);
+            if (row.colour) specBits.push(row.colour);
+            if (row.shape) specBits.push(row.shape);
+            return {
+              kind: "bottle" as const,
+              name: row.name || "Bottle",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        ...printFees
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (parseQty(row.qty) <= 0) return null;
+            const specBits: string[] = [];
+            if (row.colour) specBits.push(row.colour);
+            if (row.type) specBits.push(row.type);
+            return {
+              kind: "print_fee" as const,
+              name: row.name || "Extra",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        ...ethanolRows
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (parseQty(row.qty) <= 0) return null;
+            const specBits: string[] = [];
+            if (row.liters) specBits.push(`${row.liters}L`);
+            return {
+              kind: "ethanol" as const,
+              name: row.name || "Ethanol",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        ...pumps
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (parseQty(row.qty) <= 0) return null;
+            const specBits: string[] = [];
+            if (row.ml) specBits.push(`${row.ml}ml`);
+            if (row.code) specBits.push(`Code: ${row.code}`);
+            if (row.colour) specBits.push(row.colour);
+            return {
+              kind: "pump" as const,
+              name: row.name || "Pump",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+        ...caps
+          .map((row) => {
+            const totalAmount = amountValue(row.price, row.qty);
+            if (parseQty(row.qty) <= 0) return null;
+            const specBits: string[] = [];
+            if (row.ml) specBits.push(`${row.ml}ml`);
+            if (row.code) specBits.push(`Code: ${row.code}`);
+            if (row.colour) specBits.push(row.colour);
+            return {
+              kind: "cap" as const,
+              name: row.name || "Cap",
+              spec: specBits.join(" · "),
+              qty: parseQty(row.qty),
+              line_total: totalAmount,
+            };
+          })
+          .filter((l): l is NonNullable<typeof l> => l !== null),
+      ];
+
+      if (!lines.length && !extras.length) {
+        throw new Error("Add at least one line item before saving.");
+      }
+
+      const name = `Fragrance purchase${IN_PROGRESS_SUFFIX}`;
+
+      if (editingProformaId) {
+        const header = await fragranceApi.updateProforma(editingProformaId, {
+          name,
+          customer_name: selectedVendorName,
+          vendor_id: selectedVendorId || null,
+          proforma_date: proformaDate || null,
+          invoice_date: vendorInvoiceDate || null,
+          subtotal,
+          vat,
+          total,
+        });
+        await fragranceApi.replaceProformaLinesAndExtras(editingProformaId, lines, extras);
+        return { header };
+      }
+
+      const existing = await fragranceApi.listProformas();
+      const prefix = "DE-";
+      let maxSeq = 0;
+      existing.forEach((pf) => {
+        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
+        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
+        const num = Number(numPart);
+        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+      });
+      const nextSeq = maxSeq + 1;
+      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+
+      const header = {
+        name,
+        customer_name: selectedVendorName,
+        vendor_id: selectedVendorId || null,
+        reference: nextRef,
+        status: "pending" as const,
+        proforma_date: proformaDate || null,
+        invoice_date: vendorInvoiceDate || null,
+        subtotal,
+        vat,
+        total,
+      };
+
+      const created = await fragranceApi.createProforma(header, lines, extras);
+      return { header: created.header };
+    },
+    onSuccess: (result) => {
+      toast.success("Saved to Orders In Progress");
+      if (result?.header?.id) {
+        setSelectedProformaId(result.header.id);
+        setEditingProformaId(result.header.id);
+      }
+      queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
+      queryClient.invalidateQueries({ queryKey: ["scentProformaLines"] });
+      queryClient.invalidateQueries({ queryKey: ["scentProformaExtras"] });
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to save order"),
+  });
+
+  const essentialOilProductOptions = useMemo(() => {
+    const term = essentialOilSearch.trim().toLowerCase();
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const row of essentialOilCatalog) {
+      const name = (row.product || "").trim();
+      if (!name) continue;
+      if (seen.has(name)) continue;
+      if (term && !name.toLowerCase().includes(term)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [essentialOilCatalog, essentialOilSearch]);
+
+  const getEssentialOilVariants = (productName: string | null) => {
+    if (!productName) return [];
+    return essentialOilCatalog
+      .filter((r) => (r.product || "").trim() === productName.trim())
+      .slice()
+      .sort((a, b) => a.size.localeCompare(b.size));
+  };
+
+  const essentialOilsSubtotal = essentialOilRows.reduce((sum, row) => {
+    if (!row.sku) return sum;
+    const variant = essentialOilCatalog.find((v) => v.sku === row.sku);
+    if (!variant) return sum;
+    const qty = Number((row.qty || "").replace(",", "."));
+    if (!Number.isFinite(qty) || qty <= 0) return sum;
+    return sum + variant.unitPrice * qty;
+  }, 0);
+  const essentialOilsVat = essentialOilsSubtotal * 0.15;
+  const essentialOilsTotal = essentialOilsSubtotal + essentialOilsVat;
+
+  const createEssentialOilsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedVendorId) {
+        throw new Error("Select a vendor before creating a DE order.");
+      }
+
+      const toNumber = (value: string) => {
+        if (!value) return 0;
+        const cleaned = value.replace(/\s/g, "").replace(",", ".");
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+      };
+
+      const extras = essentialOilRows
+        .map((row) => {
+          if (!row.sku) return null;
+          const variant = essentialOilCatalog.find((v) => v.sku === row.sku);
+          if (!variant) return null;
+          const qty = toNumber(row.qty || "");
+          if (qty <= 0) return null;
+          return {
+            kind: "print_fee" as const,
+            name: `Essential Oil - ${variant.product}`,
+            spec: `SKU: ${variant.sku} · Size: ${variant.size} · Unit: R${variant.unitPrice.toFixed(2)}`,
+            qty,
+            line_total: variant.unitPrice * qty,
+          };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
+
+      if (!extras.length) {
+        throw new Error("Add at least one essential oil line with a quantity.");
+      }
+
+      const header = {
+        name: "Essential oils purchase",
+        customer_name: selectedVendorName,
+        vendor_id: selectedVendorId || null,
+        status: "pending" as const,
+        proforma_date: proformaDate || null,
+        invoice_date: vendorInvoiceDate || null,
+        subtotal: essentialOilsSubtotal,
+        vat: essentialOilsVat,
+        total: essentialOilsTotal,
+      };
+
+      if (editingProformaId) {
+        const updated = await fragranceApi.updateProforma(editingProformaId, header);
+        await fragranceApi.replaceProformaLinesAndExtras(editingProformaId, [], extras);
+        return { header: updated };
+      }
+
+      // Use the same DE-###### reference sequence as Pro-Forma.
+      const existing = await fragranceApi.listProformas();
+      const prefix = "DE-";
+      let maxSeq = 0;
+      existing.forEach((pf) => {
+        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
+        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
+        const num = Number(numPart);
+        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+      });
+      const nextSeq = maxSeq + 1;
+      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+
+      const created = await fragranceApi.createProforma(
+        { ...header, reference: nextRef },
+        [],
+        extras,
+      );
+      return created;
+    },
+    onSuccess: async (result) => {
+      toast.success("Order created (Essential Oils)");
+      setEssentialOilRows([{ id: "eo-init", productName: null, sku: null, qty: "" }]);
+      setEditingProformaId(null);
+      const trimmedVendor = selectedVendorName.trim();
+      if (trimmedVendor && result?.header?.reference) {
+        try {
+          const categories = await accountingApi.listCategories();
+          const materialsCategory = categories.find(
+            (c) =>
+              c.kind === "expense" &&
+              /(material|packaging|raw|procurement|supplier|sourcing)/i.test(c.name || ""),
+          );
+          await accountingApi.createTransaction({
+            date:
+              vendorInvoiceDate ||
+              proformaDate ||
+              new Date().toISOString().slice(0, 10),
+            type: "expense",
+            category_id: materialsCategory?.id,
+            description: `DE Order ${result.header.reference} - ${trimmedVendor}`,
+            amount: -Math.abs(Number(result.header.total || 0)),
+            reference: result.header.reference,
+            vendor: trimmedVendor,
+            campaign: "DE Orders",
+            created_by: "Admin",
+          });
+          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+        } catch (err) {
+          console.error("Failed to create linked DE expense", err);
+          toast.warning("DE order created, but linked expense could not be recorded automatically.");
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to create Essential Oils order");
+    },
+  });
+
+  const saveEssentialOilsInProgressMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedVendorId) {
+        throw new Error("Select a vendor before saving an order in progress.");
+      }
+
+      const toNumber = (value: string) => {
+        if (!value) return 0;
+        const cleaned = value.replace(/\s/g, "").replace(",", ".");
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+      };
+
+      const extras = essentialOilRows
+        .map((row) => {
+          if (!row.sku) return null;
+          const variant = essentialOilCatalog.find((v) => v.sku === row.sku);
+          if (!variant) return null;
+          const qty = toNumber(row.qty || "");
+          if (qty <= 0) return null;
+          return {
+            kind: "print_fee" as const,
+            name: `Essential Oil - ${variant.product}`,
+            spec: `SKU: ${variant.sku} · Size: ${variant.size} · Unit: R${variant.unitPrice.toFixed(2)}`,
+            qty,
+            line_total: variant.unitPrice * qty,
+          };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
+
+      if (!extras.length) {
+        throw new Error("Add at least one essential oil line with a quantity.");
+      }
+
+      const header = {
+        name: `Essential oils purchase${IN_PROGRESS_SUFFIX}`,
+        customer_name: selectedVendorName,
+        vendor_id: selectedVendorId || null,
+        status: "pending" as const,
+        proforma_date: proformaDate || null,
+        invoice_date: vendorInvoiceDate || null,
+        subtotal: essentialOilsSubtotal,
+        vat: essentialOilsVat,
+        total: essentialOilsTotal,
+      };
+
+      if (editingProformaId) {
+        const updated = await fragranceApi.updateProforma(editingProformaId, header);
+        await fragranceApi.replaceProformaLinesAndExtras(editingProformaId, [], extras);
+        return { header: updated };
+      }
+
+      const existing = await fragranceApi.listProformas();
+      const prefix = "DE-";
+      let maxSeq = 0;
+      existing.forEach((pf) => {
+        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
+        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
+        const num = Number(numPart);
+        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+      });
+      const nextSeq = maxSeq + 1;
+      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+
+      const created = await fragranceApi.createProforma(
+        { ...header, reference: nextRef },
+        [],
+        extras,
+      );
+      return created;
+    },
+    onSuccess: (result) => {
+      toast.success("Saved to Orders In Progress");
+      if (result?.header?.id) {
+        setSelectedProformaId(result.header.id);
+        setEditingProformaId(result.header.id);
+      }
+      queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
+      queryClient.invalidateQueries({ queryKey: ["scentProformaLines"] });
+      queryClient.invalidateQueries({ queryKey: ["scentProformaExtras"] });
+    },
+    onError: (err: any) => toast.error(err.message || "Failed to save order"),
   });
 
   const deleteProformaMutation = useMutation({
@@ -2705,6 +3314,17 @@ const OilsPage = () => {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("essential-oils")}
+            className={`segmented-tab ${
+              activeTab === "essential-oils"
+                ? "segmented-tab-active"
+                : ""
+            }`}
+          >
+            Essential Oils
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("products")}
             className={`segmented-tab ${
               activeTab === "products"
@@ -2727,13 +3347,24 @@ const OilsPage = () => {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("in-progress")}
+            className={`segmented-tab ${
+              activeTab === "in-progress"
+                ? "segmented-tab-active"
+                : ""
+            }`}
+            >
+            Orders In Progress
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("proformas")}
             className={`segmented-tab ${
               activeTab === "proformas"
                 ? "segmented-tab-active"
                 : ""
             }`}
-            >
+          >
             Order history
           </button>
         </nav>
@@ -2777,6 +3408,17 @@ const OilsPage = () => {
               <p className="luxury-note mb-1">Saved Pro-Formas</p>
               <p className="text-2xl font-display font-semibold text-foreground">{scentProformas.length}</p>
               <p className="text-xs text-muted-foreground mt-1">Order history</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("in-progress")}
+              className="rounded-2xl border border-border/60 bg-background/40 p-5 text-left hover:border-primary/50 hover:bg-primary/5 transition-colors"
+            >
+              <p className="luxury-note mb-1">Orders In Progress</p>
+              <p className="text-2xl font-display font-semibold text-foreground">
+                {scentProformas.filter((p) => isInProgressProforma(p)).length}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Saved drafts</p>
             </button>
             <div className="rounded-2xl border border-border/60 bg-background/40 p-5">
               <p className="luxury-note mb-1">Bottles</p>
@@ -3779,6 +4421,262 @@ const OilsPage = () => {
           </button>
         </div>
       </div>
+        </>
+      ) : activeTab === "essential-oils" ? (
+        <>
+          <div className="glass-card overflow-x-auto">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">
+                  Essential Oils order
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Build an essential oils order using SKU, size, and price. Uses the same DE reference and order history system.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={essentialOilSearch}
+                  onChange={(e) => setEssentialOilSearch(e.target.value)}
+                  placeholder="Search oils…"
+                  className="hidden md:block h-8 w-44 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-[11px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEssentialOilRows((prev) => [
+                      ...prev,
+                      {
+                        id: `eo-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
+                        productName: null,
+                        sku: null,
+                        qty: "",
+                      },
+                    ])
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add line
+                </button>
+                <label className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted cursor-pointer">
+                  Import SKU CSV/TXT
+                  <input
+                    type="file"
+                    accept=".csv,.txt"
+                    className="hidden"
+                    onChange={handleEssentialOilsCsv}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="max-h-[480px] overflow-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-muted/60 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Product
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      SKU
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Price
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Qty
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Row total
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {essentialOilRows.map((row, index) => {
+                    const variants = getEssentialOilVariants(row.productName);
+                    const selectedVariant = row.sku
+                      ? essentialOilCatalog.find((v) => v.sku === row.sku)
+                      : null;
+                    const qty = Number((row.qty || "").replace(",", "."));
+                    const rowTotal =
+                      selectedVariant && Number.isFinite(qty) && qty > 0
+                        ? qty * selectedVariant.unitPrice
+                        : 0;
+                    return (
+                      <tr
+                        key={row.id}
+                        className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
+                      >
+                        <td className="px-3 py-2 border-b border-border/40">
+                          <select
+                            className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            value={row.productName ?? ""}
+                            onChange={(e) => {
+                              const next = e.target.value || null;
+                              setEssentialOilRows((prev) =>
+                                prev.map((r) =>
+                                  r.id === row.id
+                                    ? { ...r, productName: next, sku: null }
+                                    : r,
+                                ),
+                              );
+                            }}
+                          >
+                            <option value="">Select product…</option>
+                            {essentialOilProductOptions.map((name) => (
+                              <option key={name} value={name}>
+                                {name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40 text-right">
+                          <select
+                            className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            value={row.sku ?? ""}
+                            onChange={(e) => {
+                              const sku = e.target.value || null;
+                              setEssentialOilRows((prev) =>
+                                prev.map((r) => (r.id === row.id ? { ...r, sku } : r)),
+                              );
+                            }}
+                            disabled={!row.productName}
+                          >
+                            <option value="">
+                              {row.productName ? "Select SKU…" : "Select product first"}
+                            </option>
+                            {variants.map((v) => (
+                              <option key={v.sku} value={v.sku}>
+                                {v.sku}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40 text-right">
+                          {selectedVariant ? `R${selectedVariant.unitPrice.toFixed(2)}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40">
+                          <input
+                            className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs text-right"
+                            placeholder="Qty"
+                            value={row.qty}
+                            onChange={(e) =>
+                              setEssentialOilRows((prev) =>
+                                prev.map((r) =>
+                                  r.id === row.id ? { ...r, qty: e.target.value } : r,
+                                ),
+                              )
+                            }
+                            disabled={!row.sku}
+                          />
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40 text-right text-muted-foreground">
+                          {rowTotal ? `R${rowTotal.toFixed(2)}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEssentialOilRows((prev) =>
+                                prev.length <= 1
+                                  ? [{ id: "eo-init", productName: null, sku: null, qty: "" }]
+                                  : prev.filter((r) => r.id !== row.id),
+                              )
+                            }
+                            className="inline-flex items-center justify-center rounded-md border border-input px-2 py-1 text-xs hover:bg-muted"
+                            aria-label="Delete essential oil row"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="glass-card mt-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+              <div className="space-y-1">
+                <span className="text-muted-foreground text-xs">Vendor</span>
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={selectedVendorId}
+                  onChange={(e) => setSelectedVendorId(e.target.value)}
+                >
+                  <option value="">Select vendor (defaults to ACS Promotions)</option>
+                  {vendors.map((vendor) => (
+                    <option key={vendor.id} value={vendor.id}>
+                      {vendor.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground text-xs">Pro-forma date</span>
+                <Input
+                  type="date"
+                  className="h-9"
+                  value={proformaDate}
+                  onChange={(e) => setProformaDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground text-xs">Vendor invoice date (optional)</span>
+                <Input
+                  type="date"
+                  className="h-9"
+                  value={vendorInvoiceDate}
+                  onChange={(e) => setVendorInvoiceDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2 rounded-lg border border-border/60 bg-muted/15 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="font-medium text-foreground">
+                    {essentialOilsSubtotal ? essentialOilsSubtotal.toFixed(2) : "0.00"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">VAT @ 15%</span>
+                  <span className="font-medium text-foreground">
+                    {essentialOilsVat ? essentialOilsVat.toFixed(2) : "0.00"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-border/60">
+                  <span className="text-muted-foreground">Total</span>
+                  <span className="font-semibold text-foreground">
+                    {essentialOilsTotal ? essentialOilsTotal.toFixed(2) : "0.00"}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="px-4 pb-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => saveEssentialOilsInProgressMutation.mutate()}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input px-4 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={!essentialOilsTotal || saveEssentialOilsInProgressMutation.isPending}
+              >
+                {saveEssentialOilsInProgressMutation.isPending ? "Saving…" : "Save (in progress)"}
+              </button>
+              <button
+                type="button"
+                onClick={() => createEssentialOilsMutation.mutate()}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={!essentialOilsTotal || createEssentialOilsMutation.isPending}
+              >
+                {createEssentialOilsMutation.isPending ? "Creating order…" : "Create order"}
+              </button>
+            </div>
+          </div>
         </>
       ) : activeTab === "products" ? (
         <>
@@ -4847,6 +5745,96 @@ const OilsPage = () => {
             </div>
           </div>
         </>
+      ) : activeTab === "in-progress" ? (
+        <>
+          <div className="glass-card overflow-x-auto">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">
+                  Orders In Progress
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Saved drafts from Pro-Forma and Essential Oils. Continue later, then Create order when ready.
+                </p>
+              </div>
+            </div>
+            <div className="max-h-[480px] overflow-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-muted/60 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Name
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Supplier
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Reference
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Total
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-muted-foreground border-b border-border/70">
+                      Pro-forma date
+                    </th>
+                    <th className="px-3 py-2 text-right font-semibold text-muted-foreground border-b border-border/70">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scentProformas
+                    .filter((pf) => isInProgressProforma(pf))
+                    .map((pf, index) => (
+                      <tr
+                        key={pf.id}
+                        className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
+                      >
+                        <td className="px-3 py-2 border-b border-border/40">
+                          {pf.name}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40">
+                          {getSupplierName(pf)}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40">
+                          {pf.reference || "—"}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40 text-right">
+                          {pf.total.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40">
+                          {(pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString()}
+                        </td>
+                        <td className="px-3 py-2 border-b border-border/40 text-right space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedProformaId(pf.id);
+                              setEditingProformaId(pf.id);
+                              const isEssential = (pf.name || "")
+                                .toLowerCase()
+                                .includes("essential oils purchase");
+                              setActiveTab(isEssential ? "essential-oils" : "pro-forma");
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                          >
+                            Continue
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedProformaId(pf.id)}
+                            className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                          >
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       ) : activeTab === "listed" ? (
         <>
           <div className="glass-card overflow-x-auto">
@@ -5183,7 +6171,7 @@ const OilsPage = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {scentProformas.map((pf, index) => (
+                  {scentProformas.filter((pf) => !isInProgressProforma(pf)).map((pf, index) => (
                     <tr
                       key={pf.id}
                       className={`${

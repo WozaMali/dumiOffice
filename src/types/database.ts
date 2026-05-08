@@ -363,6 +363,16 @@ export interface ScentProformaExtraLine {
   created_at: string;
 }
 
+export interface EssentialOilProduct {
+  id: string;
+  sku: string;
+  product: string;
+  size: string;
+  unit_price: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface FragranceBottleProduct {
   id: string;
   name: string;

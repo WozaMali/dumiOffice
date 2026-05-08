@@ -4,6 +4,7 @@ import type {
   ScentProforma,
   ScentProformaLine,
   ScentProformaExtraLine,
+  EssentialOilProduct,
   FragranceBottleProduct,
   PerfumePumpProduct,
   PerfumeCapProduct,
@@ -11,6 +12,25 @@ import type {
 } from "@/types/database";
 
 export const fragranceApi = {
+  // Essential oils master list
+  async listEssentialOilProducts(): Promise<EssentialOilProduct[]> {
+    const { data, error } = await supabase
+      .from("essential_oil_products")
+      .select("*")
+      .order("product");
+    if (error) throw error;
+    return (data ?? []) as EssentialOilProduct[];
+  },
+
+  async upsertEssentialOilProducts(
+    rows: Pick<EssentialOilProduct, "sku" | "product" | "size" | "unit_price">[],
+  ): Promise<void> {
+    const { error } = await supabase
+      .from("essential_oil_products")
+      .upsert(rows, { onConflict: "sku" });
+    if (error) throw error;
+  },
+
   // Scent products
   async listScentProducts(): Promise<ScentProduct[]> {
     const { data, error } = await supabase
