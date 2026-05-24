@@ -18,10 +18,31 @@ import type {
 } from "@/types/database";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import {
+  createPdfDoc,
+  DUMI_LOGO_PATH,
+  drawPdfLetterhead,
+  loadPdfLetterheadAssets,
+} from "@/lib/utils/pdf-letterhead";
 
+const NEW_LOGO_PATH = DUMI_LOGO_PATH;
 const IN_PROGRESS_SUFFIX = " (In progress)";
 const isInProgressProforma = (pf: Pick<ScentProforma, "name">) =>
   (pf.name || "").toLowerCase().includes(IN_PROGRESS_SUFFIX.trim().toLowerCase());
+
+async function computeNextDeRef(): Promise<string> {
+  const existing = await fragranceApi.listProformas();
+  const prefix = "DE-";
+  let maxSeq = 0;
+  existing.forEach((pf) => {
+    if (!pf.reference || !pf.reference.startsWith(prefix)) return;
+    const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
+    const num = Number(numPart);
+    if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+  });
+  const nextSeq = maxSeq + 1;
+  return `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+}
 
 type ScentRow = {
   id?: string;
@@ -1320,10 +1341,17 @@ const OilsPage = () => {
       }
 
       if (editingProformaId) {
+        const existing = await fragranceApi.listProformas();
+        const current = existing.find((p) => p.id === editingProformaId) ?? null;
+        const ref =
+          current && !isInProgressProforma(current) && current.reference
+            ? current.reference
+            : await computeNextDeRef();
         const header = await fragranceApi.updateProforma(editingProformaId, {
           name: "Fragrance purchase",
           customer_name: selectedVendorName,
           vendor_id: selectedVendorId || null,
+          reference: ref,
           proforma_date: proformaDate || null,
           invoice_date: vendorInvoiceDate || null,
           subtotal,
@@ -1344,17 +1372,7 @@ const OilsPage = () => {
         };
       }
 
-      const existing = await fragranceApi.listProformas();
-      const prefix = "DE-";
-      let maxSeq = 0;
-      existing.forEach((pf) => {
-        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
-        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
-        const num = Number(numPart);
-        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
-      });
-      const nextSeq = maxSeq + 1;
-      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+      const nextRef = await computeNextDeRef();
 
       const header = {
         name: "Fragrance purchase",
@@ -1566,6 +1584,7 @@ const OilsPage = () => {
           name,
           customer_name: selectedVendorName,
           vendor_id: selectedVendorId || null,
+          reference: null,
           proforma_date: proformaDate || null,
           invoice_date: vendorInvoiceDate || null,
           subtotal,
@@ -1576,23 +1595,11 @@ const OilsPage = () => {
         return { header };
       }
 
-      const existing = await fragranceApi.listProformas();
-      const prefix = "DE-";
-      let maxSeq = 0;
-      existing.forEach((pf) => {
-        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
-        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
-        const num = Number(numPart);
-        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
-      });
-      const nextSeq = maxSeq + 1;
-      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
-
       const header = {
         name,
         customer_name: selectedVendorName,
         vendor_id: selectedVendorId || null,
-        reference: nextRef,
+        reference: null,
         status: "pending" as const,
         proforma_date: proformaDate || null,
         invoice_date: vendorInvoiceDate || null,
@@ -1698,23 +1705,19 @@ const OilsPage = () => {
       };
 
       if (editingProformaId) {
-        const updated = await fragranceApi.updateProforma(editingProformaId, header);
+        const existing = await fragranceApi.listProformas();
+        const current = existing.find((p) => p.id === editingProformaId) ?? null;
+        const ref =
+          current && !isInProgressProforma(current) && current.reference
+            ? current.reference
+            : await computeNextDeRef();
+        const updated = await fragranceApi.updateProforma(editingProformaId, { ...header, reference: ref });
         await fragranceApi.replaceProformaLinesAndExtras(editingProformaId, [], extras);
         return { header: updated };
       }
 
       // Use the same DE-###### reference sequence as Pro-Forma.
-      const existing = await fragranceApi.listProformas();
-      const prefix = "DE-";
-      let maxSeq = 0;
-      existing.forEach((pf) => {
-        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
-        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
-        const num = Number(numPart);
-        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
-      });
-      const nextSeq = maxSeq + 1;
-      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
+      const nextRef = await computeNextDeRef();
 
       const created = await fragranceApi.createProforma(
         { ...header, reference: nextRef },
@@ -1801,6 +1804,7 @@ const OilsPage = () => {
         name: `Essential oils purchase${IN_PROGRESS_SUFFIX}`,
         customer_name: selectedVendorName,
         vendor_id: selectedVendorId || null,
+        reference: null,
         status: "pending" as const,
         proforma_date: proformaDate || null,
         invoice_date: vendorInvoiceDate || null,
@@ -1815,20 +1819,8 @@ const OilsPage = () => {
         return { header: updated };
       }
 
-      const existing = await fragranceApi.listProformas();
-      const prefix = "DE-";
-      let maxSeq = 0;
-      existing.forEach((pf) => {
-        if (!pf.reference || !pf.reference.startsWith(prefix)) return;
-        const numPart = pf.reference.slice(prefix.length).replace(/\D/g, "");
-        const num = Number(numPart);
-        if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
-      });
-      const nextSeq = maxSeq + 1;
-      const nextRef = `${prefix}${nextSeq.toString().padStart(6, "0")}`;
-
       const created = await fragranceApi.createProforma(
-        { ...header, reference: nextRef },
+        header,
         [],
         extras,
       );
@@ -1907,21 +1899,29 @@ const OilsPage = () => {
 
   const handleDownloadSelectedHistoryPdf = async (
     orientation: "portrait" | "landscape" = "landscape",
+    proformaOverride?: ScentProforma,
   ) => {
-    if (!selectedProformaId || !selectedProforma) {
+    const targetProforma = proformaOverride ?? selectedProforma;
+    const targetProformaId = proformaOverride?.id ?? selectedProformaId;
+    if (!targetProformaId || !targetProforma) {
       toast.message("Select a fragrance purchase in the table first.");
       return;
     }
-    if (isProformaLinesFetching) {
+    if (!proformaOverride && isProformaLinesFetching) {
       toast.message("Loading purchase lines…");
       return;
     }
-    if (isProformaExtrasFetching) {
+    if (!proformaOverride && isProformaExtrasFetching) {
       toast.message("Loading purchase details…");
       return;
     }
-    const { jsPDF } = await import("jspdf");
-    const doc = new jsPDF({
+    const linesForPdf = proformaOverride
+      ? await fragranceApi.listProformaLines(targetProformaId)
+      : selectedProformaLines;
+    const extrasForPdf = proformaOverride
+      ? await fragranceApi.listProformaExtras(targetProformaId)
+      : selectedProformaExtras;
+    const doc = await createPdfDoc({
       orientation: orientation === "landscape" ? "landscape" : "portrait",
     });
 
@@ -1930,63 +1930,13 @@ const OilsPage = () => {
     const margin = 15;
     const lineHeight = 6;
 
-    const loadImage = (src: string) =>
-      new Promise<HTMLImageElement | null>((resolve) => {
-        const img = new Image();
-        img.src = src;
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-      });
+    const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets(NEW_LOGO_PATH);
+    const oilsTagline = "Fragrance & packaging solutions";
+    const letterheadOpts = { margin, tagline: oilsTagline, socialIcons };
+    const drawContinuationLetterhead = () =>
+      drawPdfLetterhead(doc, logoImg, { ...letterheadOpts, compact: true, socialIcons: undefined });
 
-    const logoImg = await loadImage("/DUMI ESSENCE logo.png");
-
-    // Header background band
-    doc.setFillColor(20, 20, 20);
-    doc.rect(0, 0, pageWidth, 40, "F");
-
-    // Left-hand wording: brand + tagline
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(255, 255, 255);
-    doc.text("Dumi Essence", margin, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(220, 220, 220);
-    doc.text("Fragrance & packaging solutions", margin, 26);
-
-    // Centered logo
-    if (logoImg) {
-      const logoHeight = 18;
-      const logoWidth = (logoImg.width / logoImg.height) * logoHeight;
-      const logoX = (pageWidth - logoWidth) / 2;
-      const logoY = 11;
-      doc.addImage(logoImg, "PNG", logoX, logoY, logoWidth, logoHeight);
-    }
-
-    // Address and contacts on the right
-    const infoX = pageWidth - margin;
-    let yInfo = 14;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    ["652 Hashe Street", "Dobsonville", "1863"].forEach((line) => {
-      doc.text(line, infoX, yInfo, { align: "right" });
-      yInfo += 4;
-    });
-
-    yInfo += 2;
-    doc.setFont("helvetica", "bold");
-    doc.text("Contacts", infoX, yInfo, { align: "right" });
-    yInfo += 4;
-    doc.setFont("helvetica", "normal");
-    doc.text("info@dumiessence.co.za", infoX, yInfo, { align: "right" });
-    yInfo += 4;
-    doc.text("072 849 5559", infoX, yInfo, { align: "right" });
-
-    // Separator line under header
-    doc.setDrawColor(200, 170, 90);
-    doc.setLineWidth(0.6);
-    doc.line(margin, 45, pageWidth - margin, 45);
+    drawPdfLetterhead(doc, logoImg, letterheadOpts);
 
     // Document title and meta (match Pro-Forma tab export)
     doc.setTextColor(40, 40, 40);
@@ -1997,25 +1947,25 @@ const OilsPage = () => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     const createdDate =
-      selectedProforma.proforma_date ||
-      new Date(selectedProforma.created_at).toISOString().slice(0, 10);
+      targetProforma.proforma_date ||
+      new Date(targetProforma.created_at).toISOString().slice(0, 10);
     doc.text(
-      `Reference: ${selectedProforma.reference || "—"} · Pro-forma date: ${createdDate}`,
+      `Reference: ${targetProforma.reference || "—"} · Pro-forma date: ${createdDate}`,
       margin,
       64,
     );
-    const invoiceLine = selectedProforma.invoice_date
-      ? `Invoice date: ${selectedProforma.invoice_date}`
+    const invoiceLine = targetProforma.invoice_date
+      ? `Invoice date: ${targetProforma.invoice_date}`
       : "Invoice date: —";
     doc.text(invoiceLine, margin, 69);
 
     // Supplier / vendor (order history) — right column, aligned with document meta
     const historyVendor =
-      vendors.find((v) => v.id === selectedProforma.vendor_id) ??
+      vendors.find((v) => v.id === targetProforma.vendor_id) ??
       vendors.find(
         (v) =>
           v.name.trim() ===
-          (selectedProforma.customer_name || "").trim(),
+          (targetProforma.customer_name || "").trim(),
       );
 
     const rightX = pageWidth - margin;
@@ -2066,12 +2016,12 @@ const OilsPage = () => {
     } else {
       pushVendorLines(
         supplierLines,
-        getSupplierName(selectedProforma) || "—",
+        getSupplierName(targetProforma) || "—",
       );
-      if (selectedProforma.customer_name?.trim()) {
+      if (targetProforma.customer_name?.trim()) {
         pushVendorLines(
           supplierLines,
-          `Recorded name: ${selectedProforma.customer_name.trim()}`,
+          `Recorded name: ${targetProforma.customer_name.trim()}`,
         );
       }
     }
@@ -2098,7 +2048,7 @@ const OilsPage = () => {
       const bottomMargin = pageHeight - 20;
       if (contentY + neededHeight > bottomMargin) {
         doc.addPage();
-        contentY = 30;
+        contentY = drawContinuationLetterhead();
       }
     };
 
@@ -2258,7 +2208,7 @@ const OilsPage = () => {
     };
 
     // Build rows from stored pro-forma lines (match Pro-Forma scent section)
-    const scentRows = selectedProformaLines
+    const scentRows = linesForPdf
       .map((line: any) => {
         const qty1 = Number(line.qty_1kg ?? 0) || 0;
         const qty5 = Number(line.qty_500g ?? 0) || 0;
@@ -2310,7 +2260,7 @@ const OilsPage = () => {
     };
 
     const extrasOfKind = (kind: ScentProformaExtraLine["kind"]) =>
-      selectedProformaExtras
+      extrasForPdf
         .filter((e) => e.kind === kind)
         .filter(extraLineIsComplete)
         .map((e) => {
@@ -2363,7 +2313,7 @@ const OilsPage = () => {
 
     // Summary box: Scents subtotal, Other materials, Subtotal, Total (incl. VAT)
     // Subtotals match lines shown in the PDF tables (qty + price required).
-    const scentsSubtotalPdf = selectedProformaLines.reduce(
+    const scentsSubtotalPdf = linesForPdf.reduce(
       (sum: number, line: any) => {
         const qty1 = Number(line.qty_1kg ?? 0) || 0;
         const qty5 = Number(line.qty_500g ?? 0) || 0;
@@ -2383,7 +2333,7 @@ const OilsPage = () => {
       },
       0,
     );
-    const extrasSubtotalPdf = selectedProformaExtras
+    const extrasSubtotalPdf = extrasForPdf
       .filter(extraLineIsComplete)
       .reduce(
         (sum: number, e) => sum + (Number(e.line_total ?? 0) || 0),
@@ -2391,7 +2341,7 @@ const OilsPage = () => {
       );
     const subtotalPdf = scentsSubtotalPdf + extrasSubtotalPdf;
     const totalInclVat =
-      Number(selectedProforma.total ?? subtotalPdf) || subtotalPdf;
+      Number(targetProforma.total ?? subtotalPdf) || subtotalPdf;
 
     const boxWidth = 70;
     const boxHeight = 4 * lineHeight + 12;
@@ -2401,7 +2351,7 @@ const OilsPage = () => {
 
     if (contentY + 10 > boxY) {
       doc.addPage();
-      contentY = 30;
+      contentY = drawContinuationLetterhead();
       boxY = pageHeight - bottomMargin - boxHeight;
     }
 
@@ -2428,7 +2378,7 @@ const OilsPage = () => {
     addSummaryLine("Subtotal", `R${subtotalPdf.toFixed(2)}`);
     addSummaryLine("Total (incl. VAT)", `R${totalInclVat.toFixed(2)}`, true);
 
-    doc.save(`purchase-history-${selectedProforma.id}.pdf`);
+    doc.save(`purchase-history-${targetProforma.id}.pdf`);
   };
 
   const handleDownloadProformaPdf = async (
@@ -2436,8 +2386,7 @@ const OilsPage = () => {
     lines: any[],
     orientation: "landscape" | "portrait" = "landscape",
   ) => {
-    const { jsPDF } = await import("jspdf");
-    const doc = new jsPDF({
+    const doc = await createPdfDoc({
       orientation: orientation === "portrait" ? "portrait" : "landscape",
     });
 
@@ -2445,60 +2394,13 @@ const OilsPage = () => {
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
 
-    const loadImage = (src: string) =>
-      new Promise<HTMLImageElement | null>((resolve) => {
-    const img = new Image();
-        img.src = src;
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-      });
+    const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets(NEW_LOGO_PATH);
+    const oilsTagline = "Fragrance & packaging solutions";
+    const letterheadOpts = { margin, tagline: oilsTagline, socialIcons };
+    const drawContinuationLetterhead = () =>
+      drawPdfLetterhead(doc, logoImg, { ...letterheadOpts, compact: true, socialIcons: undefined });
 
-    const logoImg = await loadImage("/DUMI ESSENCE logo.png");
-
-    // Header band
-    doc.setFillColor(20, 20, 20);
-    doc.rect(0, 0, pageWidth, 40, "F");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(255, 255, 255);
-    doc.text("Dumi Essence", margin, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(220, 220, 220);
-    doc.text("Fragrance & packaging solutions", margin, 26);
-
-    if (logoImg) {
-      const logoHeight = 18;
-      const logoWidth = (logoImg.width / logoImg.height) * logoHeight;
-      const logoX = (pageWidth - logoWidth) / 2;
-      const logoY = 11;
-      doc.addImage(logoImg, "PNG", logoX, logoY, logoWidth, logoHeight);
-    }
-
-    const infoX = pageWidth - margin;
-    let yInfo = 14;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(255, 255, 255);
-    ["652 Hashe Street", "Dobsonville", "1863"].forEach((line) => {
-      doc.text(line, infoX, yInfo, { align: "right" });
-      yInfo += 4;
-    });
-    yInfo += 2;
-    doc.setFont("helvetica", "bold");
-    doc.text("Contacts", infoX, yInfo, { align: "right" });
-    yInfo += 4;
-    doc.setFont("helvetica", "normal");
-    doc.text("info@dumiessence.co.za", infoX, yInfo, { align: "right" });
-    yInfo += 4;
-    doc.text("072 849 5559", infoX, yInfo, { align: "right" });
-
-    // Divider
-    doc.setDrawColor(200, 170, 90);
-    doc.setLineWidth(0.6);
-    doc.line(margin, 45, pageWidth - margin, 45);
+    drawPdfLetterhead(doc, logoImg, letterheadOpts);
 
     // Title + meta
     doc.setTextColor(40, 40, 40);
@@ -2590,7 +2492,7 @@ const OilsPage = () => {
     lines.forEach((line, idx) => {
       if (y + rowH + 30 > pageHeight - margin) {
         doc.addPage();
-        y = margin;
+        y = drawContinuationLetterhead();
         drawHeader(y);
         y += rowH;
       }
@@ -2867,8 +2769,7 @@ const OilsPage = () => {
   });
 
   const handleDownloadPdf = async (orientation: "portrait" | "landscape" = "landscape") => {
-    const { jsPDF } = await import("jspdf");
-    const doc = new jsPDF({
+    const doc = await createPdfDoc({
       orientation: orientation === "landscape" ? "landscape" : "portrait",
     });
 
@@ -2877,55 +2778,14 @@ const OilsPage = () => {
     const margin = 15;
     const lineHeight = 6;
 
-    const renderDocument = (logoImg?: HTMLImageElement) => {
-      // Header background band
-      doc.setFillColor(20, 20, 20);
-      doc.rect(0, 0, pageWidth, 40, "F");
+    const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets(NEW_LOGO_PATH);
+    const oilsTagline = "Fragrance & packaging solutions";
+    const letterheadOpts = { margin, tagline: oilsTagline, socialIcons };
+    const drawContinuationLetterhead = () =>
+      drawPdfLetterhead(doc, logoImg, { ...letterheadOpts, compact: true, socialIcons: undefined });
 
-      // Left-hand wording: brand + tagline (original layout)
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.setTextColor(255, 255, 255);
-      doc.text("Dumi Essence", margin, 20);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(220, 220, 220);
-      doc.text("Fragrance & packaging solutions", margin, 26);
-
-      // Centered logo on letterhead (no text changes)
-      if (logoImg) {
-        const logoHeight = 18;
-        const logoWidth = (logoImg.width / logoImg.height) * logoHeight;
-        const logoX = (pageWidth - logoWidth) / 2;
-        const logoY = 11;
-        doc.addImage(logoImg, "PNG", logoX, logoY, logoWidth, logoHeight);
-      }
-
-      // Address and contacts on the right
-      const infoX = pageWidth - margin;
-      let y = 14;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      const addressLines = ["652 Hashe Street", "Dobsonville", "1863"];
-      addressLines.forEach((line) => {
-        doc.text(line, infoX, y, { align: "right" });
-        y += 4;
-      });
-
-      y += 2;
-      doc.setFont("helvetica", "bold");
-      doc.text("Contacts", infoX, y, { align: "right" });
-      y += 4;
-      doc.setFont("helvetica", "normal");
-      doc.text("info@dumiessence.co.za", infoX, y, { align: "right" });
-      y += 4;
-      doc.text("072 849 5559", infoX, y, { align: "right" });
-
-        // Separator line under header
-        doc.setDrawColor(200, 170, 90);
-        doc.setLineWidth(0.6);
-        doc.line(margin, 45, pageWidth - margin, 45);
+    const renderDocument = () => {
+      drawPdfLetterhead(doc, logoImg, letterheadOpts);
 
         // Document title and meta
         doc.setTextColor(40, 40, 40);
@@ -2945,7 +2805,7 @@ const OilsPage = () => {
         const bottomMargin = pageHeight - 20;
         if (contentY + neededHeight > bottomMargin) {
           doc.addPage();
-          contentY = 30;
+          contentY = drawContinuationLetterhead();
         }
       };
 
@@ -3195,7 +3055,7 @@ const OilsPage = () => {
       if (contentY > boxY - 10) {
         // Not enough space on this page; move to new page
         doc.addPage();
-        contentY = 30;
+        contentY = drawContinuationLetterhead();
         boxY = pageHeight - bottomMargin - boxHeight;
       }
 
@@ -3223,20 +3083,7 @@ const OilsPage = () => {
       doc.save("dumi-essence-oils-list.pdf");
     };
 
-    let rendered = false;
-    const safeRender = (logoImg?: HTMLImageElement) => {
-      if (rendered) return;
-      rendered = true;
-      renderDocument(logoImg);
-    };
-
-    const img = new Image();
-    img.src = "/DUMI ESSENCE logo.png";
-    img.onload = () => safeRender(img);
-    img.onerror = () => safeRender(undefined);
-
-    // Fallback in case onload/onerror never fires (e.g. caching quirks)
-    setTimeout(() => safeRender(undefined), 1500);
+    renderDocument();
   };
 
   return (
@@ -5797,7 +5644,7 @@ const OilsPage = () => {
                           {getSupplierName(pf)}
                         </td>
                         <td className="px-3 py-2 border-b border-border/40">
-                          {pf.reference || "—"}
+                          {"—"}
                         </td>
                         <td className="px-3 py-2 border-b border-border/40 text-right">
                           {pf.total.toFixed(2)}
@@ -5819,6 +5666,14 @@ const OilsPage = () => {
                             className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
                           >
                             Continue
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadSelectedHistoryPdf("landscape", pf)}
+                            className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Landscape
                           </button>
                           <button
                             type="button"

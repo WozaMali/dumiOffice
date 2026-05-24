@@ -1,13 +1,11 @@
 import type { AccountingCategory, AccountingTransaction } from "@/types/database";
 import ExcelJS from "exceljs";
-
-const loadImage = (src: string): Promise<HTMLImageElement | null> =>
-  new Promise((resolve) => {
-    const img = new Image();
-    img.src = src;
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-  });
+import {
+  createPdfDoc,
+  DUMI_LOGO_PATH,
+  drawPdfLetterhead,
+  loadPdfLetterheadAssets,
+} from "@/lib/utils/pdf-letterhead";
 
 const money = (amount: number) =>
   `R${Number(amount || 0).toLocaleString("en-ZA", {
@@ -42,14 +40,13 @@ export async function exportAccountingPdf(params: {
   dateTo: string;
 }): Promise<void> {
   const { transactions, categories, dateFrom, dateTo } = params;
-  const { jsPDF } = await import("jspdf");
-  const doc = new jsPDF({ orientation: "landscape" });
+  const doc = await createPdfDoc({ orientation: "landscape" });
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 14;
   const bottom = pageHeight - 14;
-  const logoImg = await loadImage("/DUMI ESSENCE logo.png");
+  const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets();
   const generated = new Date().toISOString().slice(0, 10);
 
   const totals = transactions.reduce(
@@ -63,33 +60,18 @@ export async function exportAccountingPdf(params: {
   const net = totals.income - totals.expense;
 
   let y = 0;
-  const drawLetterhead = () => {
-    doc.setFillColor(20, 20, 20);
-    doc.rect(0, 0, pageWidth, 38, "F");
+  const drawLetterhead = (compact = false) => {
+    drawPdfLetterhead(doc, logoImg, {
+      margin,
+      compact,
+      tagline: "Accounting & Ledger Report",
+      socialIcons: compact ? undefined : socialIcons,
+    });
 
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Dumi Essence", margin, 18);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text("Accounting & Ledger Report", margin, 24);
-
-    if (logoImg) {
-      const logoH = 16;
-      const logoW = (logoImg.width / logoImg.height) * logoH;
-      doc.addImage(logoImg, "PNG", (pageWidth - logoW) / 2, 10, logoW, logoH);
+    if (compact) {
+      y = 52;
+      return;
     }
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.text("652 Hashe Street, Dobsonville, Soweto", pageWidth - margin, 14, { align: "right" });
-    doc.text("info@dumiessence.co.za", pageWidth - margin, 18, { align: "right" });
-    doc.text("072 849 5559", pageWidth - margin, 22, { align: "right" });
-
-    doc.setDrawColor(200, 170, 90);
-    doc.setLineWidth(0.6);
-    doc.line(margin, 42, pageWidth - margin, 42);
 
     doc.setTextColor(40, 40, 40);
     doc.setFont("helvetica", "bold");
@@ -156,7 +138,7 @@ export async function exportAccountingPdf(params: {
   transactions.forEach((t, idx) => {
     if (y + 7 > bottom) {
       doc.addPage("a4", "l");
-      drawLetterhead();
+      drawLetterhead(true);
       y += 2;
       drawHeader();
     }
@@ -250,7 +232,7 @@ export async function exportAccountingExcel(params: {
   ws.getCell("E6").font = { name: "Calibri", size: 11 };
   ws.getCell("E6").alignment = { horizontal: "right" };
 
-  const logoBase64 = await loadImageBase64("/DUMI ESSENCE logo.png");
+  const logoBase64 = await loadImageBase64(DUMI_LOGO_PATH);
   if (logoBase64) {
     const logoId = wb.addImage({ base64: logoBase64, extension: "png" });
     ws.addImage(logoId, {

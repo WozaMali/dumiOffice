@@ -1,12 +1,9 @@
 import type { Product } from "@/types/database";
-
-const loadImage = (src: string): Promise<HTMLImageElement | null> =>
-  new Promise((resolve) => {
-    const img = new Image();
-    img.src = src;
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-  });
+import {
+  createPdfDoc,
+  drawPdfLetterhead,
+  loadPdfLetterheadAssets,
+} from "@/lib/utils/pdf-letterhead";
 
 function getStatus(p: Product, inStockNow: number): string {
   if (!p.is_active) return "Inactive";
@@ -61,8 +58,7 @@ export async function generateInventoryPDF(
     soldToDateByProductId?: Record<string, number>;
   },
 ): Promise<void> {
-  const { jsPDF } = await import("jspdf");
-  const doc = new jsPDF({ orientation: "landscape" });
+  const doc = await createPdfDoc({ orientation: "landscape" });
   const soldToDateByProductId = options?.soldToDateByProductId ?? {};
 
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -73,59 +69,17 @@ export async function generateInventoryPDF(
   const rowHeight = 6;
   const bottomMargin = pageHeight - 22;
 
-  const logoImg = await loadImage("/DUMI ESSENCE logo.png");
+  const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets();
   const generated = new Date().toISOString().slice(0, 10);
 
-  const drawLetterhead = () => {
-    // Header background band
-    doc.setFillColor(20, 20, 20);
-    doc.rect(0, 0, pageWidth, 40, "F");
-
-    // Left: brand + tagline
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(255, 255, 255);
-    doc.text("Dumi Essence", margin, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(220, 220, 220);
-    doc.text("Fine fragrances and home scenting", margin, 26);
-
-    // Centered logo
-    if (logoImg) {
-      const logoHeight = 18;
-      const logoWidth = (logoImg.width / logoImg.height) * logoHeight;
-      const logoX = (pageWidth - logoWidth) / 2;
-      const logoY = 11;
-      doc.addImage(logoImg, "PNG", logoX, logoY, logoWidth, logoHeight);
-    }
-
-    // Right: address and contacts
-    const infoX = pageWidth - margin;
-    let yInfo = 12;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(255, 255, 255);
-    ["652 Hashe Street", "Dobsonville, Soweto", "1863"].forEach((line) => {
-      doc.text(line, infoX, yInfo, { align: "right" });
-      yInfo += 4;
+  const drawLetterhead = (compact = false) => {
+    const contentStart = drawPdfLetterhead(doc, logoImg, {
+      margin,
+      compact,
+      socialIcons: compact ? undefined : socialIcons,
     });
-    yInfo += 2;
-    doc.setFont("helvetica", "bold");
-    doc.text("Contacts", infoX, yInfo, { align: "right" });
-    yInfo += 4;
-    doc.setFont("helvetica", "normal");
-    doc.text("info@dumiessence.co.za", infoX, yInfo, { align: "right" });
-    yInfo += 4;
-    doc.text("072 849 5559", infoX, yInfo, { align: "right" });
+    if (compact) return contentStart;
 
-    // Gold separator under letterhead
-    doc.setDrawColor(200, 170, 90);
-    doc.setLineWidth(0.6);
-    doc.line(margin, 45, pageWidth - margin, 45);
-
-    // Document title and meta
     doc.setTextColor(40, 40, 40);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
@@ -196,7 +150,7 @@ export async function generateInventoryPDF(
   const ensureSpace = (needed: number) => {
     if (contentY + needed > bottomMargin) {
       doc.addPage("a4", "l");
-      contentY = drawLetterhead();
+      contentY = drawLetterhead(true);
       // Force the table header to be re-drawn on the new page.
       tableHeaderRendered = false;
       shouldRedrawGroupHeader = true;
@@ -244,7 +198,7 @@ export async function generateInventoryPDF(
       10;
     if (contentY + minGroupBlockHeight > bottomMargin) {
       doc.addPage("a4", "l");
-      contentY = drawLetterhead();
+      contentY = drawLetterhead(true);
       shouldRedrawGroupHeader = false;
       tableHeaderRendered = false;
     }

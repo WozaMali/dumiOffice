@@ -87,9 +87,12 @@ export const generateShippingLabels = (orders: Order[]): string => {
       (order) => `
     <div style="page-break-after: always; padding: 18px; border: 2px solid #111; margin: 10px; border-radius: 14px; font-family: Inter, Arial, sans-serif;">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 14px; border-bottom:1px solid #ddd; padding-bottom:10px;">
-        <div>
-          <h1 style="margin: 0; font-size: 20px; letter-spacing:0.04em;">Dumi Essence</h1>
-          <p style="margin: 4px 0 0 0; font-size: 11px; color:#444;">Premium Fragrances · Shipping Label</p>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <img src="/Dumi Essence.png" alt="Dumi Essence" style="height:42px; width:auto; display:block;" />
+          <div>
+            <h1 style="margin: 0; font-size: 20px; letter-spacing:0.04em;">Dumi Essence</h1>
+            <p style="margin: 4px 0 0 0; font-size: 11px; color:#444;">Premium Fragrances · Shipping Label</p>
+          </div>
         </div>
         <div style="text-align:right;">
           <p style="margin:0; font-size:11px; color:#555;">${order.date}</p>

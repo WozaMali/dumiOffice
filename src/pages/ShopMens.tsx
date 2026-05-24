@@ -34,7 +34,7 @@ const ShopMens = () => {
             </Link>
             <Link to="/" className="flex items-center gap-2">
               <img
-                src="/DUMI ESSENCE logo.png"
+                src="/Dumi Essence.png"
                 alt="Dumi Essence"
                 className="h-8 w-auto"
               />
