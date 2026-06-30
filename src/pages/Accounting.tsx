@@ -12,6 +12,15 @@ import { ordersApi } from "@/lib/api/orders";
 import { productsApi } from "@/lib/api/products";
 import { accountingApi } from "@/lib/api/accounting";
 import { fragranceApi } from "@/lib/api/fragrance";
+import { useApprovedDeOrderExpenseSync } from "@/hooks/useApprovedDeOrderExpenseSync";
+import {
+  approvedDeExpenseRowAsTransaction,
+  buildApprovedDeExpenseRows,
+  filterApprovedDeExpenseRowsByDate,
+  getApprovedDeExpenseDisplayRange,
+  getYearToDateRange,
+  isIsoDateInRange,
+} from "@/lib/utils/de-order-expenses";
 import type {
   Order,
   Product,
@@ -48,22 +57,12 @@ const formatCurrency = (amount: number) =>
     maximumFractionDigits: 2,
   })}`;
 
-const getMonthStartEnd = () => {
-  const d = new Date();
-  const start = new Date(d.getFullYear(), d.getMonth(), 1);
-  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-  return {
-    dateFrom: start.toISOString().slice(0, 10),
-    dateTo: end.toISOString().slice(0, 10),
-  };
-};
-
 const Accounting = () => {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { dateFrom: defaultFrom, dateTo: defaultTo } = getMonthStartEnd();
-  const [dateFrom, setDateFrom] = useState(defaultFrom);
-  const [dateTo, setDateTo] = useState(defaultTo);
+  const ytdRange = getYearToDateRange();
+  const [dateFrom, setDateFrom] = useState(ytdRange.from);
+  const [dateTo, setDateTo] = useState(ytdRange.to);
   const [transactionPanelOpen, setTransactionPanelOpen] = useState(false);
   const [txnForm, setTxnForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -85,8 +84,7 @@ const Accounting = () => {
   const [clearLedgerOpen, setClearLedgerOpen] = useState(false);
   const [clearLedgerScope, setClearLedgerScope] = useState<"range" | "all">("range");
   const [accountingTab, setAccountingTab] = useState<"ledger" | "expenses">("ledger");
-  const deSyncInFlightRef = useRef(false);
-  const DE_DUPLICATE_CLEANUP_FLAG = "accounting_de_duplicate_cleanup_done_v1";
+  useApprovedDeOrderExpenseSync();
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -123,118 +121,29 @@ const Accounting = () => {
     queryFn: fragranceApi.listProformas,
   });
 
+  const approvedDeExpenseRows = useMemo(
+    () => buildApprovedDeExpenseRows(scentProformas, transactions),
+    [scentProformas, transactions],
+  );
+
+  const deRangeInitializedRef = useRef(false);
+
   useEffect(() => {
-    if (deSyncInFlightRef.current) return;
-    if (!scentProformas.length) return;
+    if (deRangeInitializedRef.current) return;
+    if (approvedDeExpenseRows.length === 0) return;
+    deRangeInitializedRef.current = true;
 
-    const normalizeRef = (value: string | null | undefined) => (value || "").trim().toLowerCase();
-    const isDeRef = (value: string | null | undefined) => /^de-\d{6}$/i.test((value || "").trim());
-
-    const deTransactionGroups = transactions.reduce<Map<string, AccountingTransaction[]>>((acc, tx) => {
-      const ref = normalizeRef(tx.reference);
-      if (!isDeRef(ref)) return acc;
-      const list = acc.get(ref) ?? [];
-      list.push(tx);
-      acc.set(ref, list);
-      return acc;
-    }, new Map());
-
-    const duplicateTransactionIds: string[] = [];
-    deTransactionGroups.forEach((group) => {
-      if (group.length <= 1) return;
-      const sorted = [...group].sort((a, b) => {
-        const aTs = new Date(a.created_at || 0).getTime();
-        const bTs = new Date(b.created_at || 0).getTime();
-        return aTs - bTs;
-      });
-      const toDelete = sorted.slice(1).map((tx) => tx.id);
-      duplicateTransactionIds.push(...toDelete);
-    });
-
-    const cleanupAlreadyDone =
-      typeof window !== "undefined" &&
-      window.localStorage.getItem(DE_DUPLICATE_CLEANUP_FLAG) === "true";
-
-    if (duplicateTransactionIds.length && !cleanupAlreadyDone) {
-      deSyncInFlightRef.current = true;
-      (async () => {
-        try {
-          for (const id of duplicateTransactionIds) {
-            await accountingApi.deleteTransaction(id);
-          }
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem(DE_DUPLICATE_CLEANUP_FLAG, "true");
-          }
-          toast.success(
-            `Cleaned up ${duplicateTransactionIds.length} duplicate DE ledger entr${
-              duplicateTransactionIds.length === 1 ? "y" : "ies"
-            }.`,
-          );
-          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
-        } catch (err) {
-          console.error("Failed removing duplicate DE ledger entries", err);
-          toast.error("Failed to clean duplicate DE ledger entries.");
-        } finally {
-          deSyncInFlightRef.current = false;
-        }
-      })();
-      return;
-    }
-
-    if (cleanupAlreadyDone) {
-      deSyncInFlightRef.current = false;
-    }
-
-    const existingRefs = new Set(
-      transactions
-        .map((t) => normalizeRef(t.reference))
-        .filter((r) => !!r),
+    const inRange = filterApprovedDeExpenseRowsByDate(
+      approvedDeExpenseRows,
+      dateFrom,
+      dateTo,
     );
+    if (inRange.length > 0) return;
 
-    // Guard against duplicate proformas carrying the same DE reference.
-    // We only want one ledger insert per unique normalized reference.
-    const seenProformaRefs = new Set<string>();
-    const missingProformas = scentProformas.filter((pf) => {
-      const ref = normalizeRef(pf.reference);
-      if (!isDeRef(ref)) return false;
-      if (existingRefs.has(ref)) return false;
-      if (seenProformaRefs.has(ref)) return false;
-      seenProformaRefs.add(ref);
-      return true;
-    });
-
-    if (!missingProformas.length) return;
-
-    deSyncInFlightRef.current = true;
-    (async () => {
-      try {
-        for (const pf of missingProformas) {
-          const normalizedRef = normalizeRef(pf.reference);
-          if (!normalizedRef || existingRefs.has(normalizedRef)) continue;
-
-          const txDate = (pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString();
-          if (!txDate) continue;
-
-          await accountingApi.createTransaction({
-            date: txDate,
-            type: "expense",
-            amount: Number(pf.total ?? 0) || 0,
-            description: `DE Order ${pf.reference || ""} - ${pf.customer_name || "Unknown vendor"}`,
-            reference: pf.reference || undefined,
-            vendor: pf.customer_name || undefined,
-            campaign: "DE Orders",
-            created_by: "Admin",
-          });
-          existingRefs.add(normalizedRef);
-        }
-        queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
-      } catch (err) {
-        console.error("Failed syncing DE proformas into accounting ledger", err);
-      } finally {
-        deSyncInFlightRef.current = false;
-      }
-    })();
-  }, [scentProformas, transactions, queryClient]);
+    const range = getApprovedDeExpenseDisplayRange(scentProformas);
+    setDateFrom(range.from);
+    setDateTo(range.to);
+  }, [approvedDeExpenseRows, scentProformas, dateFrom, dateTo]);
 
   const refetchAll = () => {
     queryClient.invalidateQueries({ queryKey: ["orders", "accounting"] });
@@ -311,7 +220,7 @@ const Accounting = () => {
   }, [orders, dateFrom, dateTo]);
 
   const transactionsInRange = useMemo(() => {
-    return transactions.filter((t) => t.date >= dateFrom && t.date <= dateTo);
+    return transactions.filter((t) => isIsoDateInRange(t.date, dateFrom, dateTo));
   }, [transactions, dateFrom, dateTo]);
 
   const metrics = useMemo(() => {
@@ -352,10 +261,14 @@ const Accounting = () => {
   }, [ordersInRange, products, transactionsInRange]);
 
   const filteredTransactions = useMemo(() => {
-    const effectiveType = accountingTab === "expenses" ? "expense" : txnFilterType;
-    const byType = effectiveType === "all" ? transactionsInRange : transactionsInRange.filter((t) => t.type === effectiveType);
-    return byType;
-  }, [transactionsInRange, txnFilterType, accountingTab]);
+    if (accountingTab === "expenses") {
+      return filterApprovedDeExpenseRowsByDate(approvedDeExpenseRows, dateFrom, dateTo).map((row) =>
+        approvedDeExpenseRowAsTransaction(row, transactions),
+      );
+    }
+    const base = transactionsInRange;
+    return txnFilterType === "all" ? base : base.filter((t) => t.type === txnFilterType);
+  }, [transactionsInRange, txnFilterType, accountingTab, approvedDeExpenseRows, dateFrom, dateTo, transactions]);
 
   const ledgerTotals = useMemo(() => {
     const income = filteredTransactions
@@ -373,8 +286,11 @@ const Accounting = () => {
   }, [filteredTransactions, ledgerPage, ledgerPageSize]);
   const ledgerTotalPages = Math.max(1, Math.ceil(filteredTransactions.length / ledgerPageSize));
   const expensesInRange = useMemo(
-    () => transactionsInRange.filter((t) => t.type === "expense"),
-    [transactionsInRange],
+    () =>
+      filterApprovedDeExpenseRowsByDate(approvedDeExpenseRows, dateFrom, dateTo).map((row) =>
+        approvedDeExpenseRowAsTransaction(row, transactions),
+      ),
+    [approvedDeExpenseRows, dateFrom, dateTo, transactions],
   );
   const expensesByVendor = useMemo(() => {
     return Object.entries(
@@ -718,7 +634,7 @@ const Accounting = () => {
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between rounded-xl border border-border/50 bg-muted/15 px-4 py-3 mb-4 text-xs">
             <p className="text-muted-foreground max-w-xl">
-              Same accounting transactions as the Expenses and Vendors expense ledgers. Open either workspace with this date range (and vendor filter where supported).
+              Approved DE orders from Oils → Order history only. Pending orders are excluded until you approve them in Oils.
             </p>
             <div className="flex flex-wrap gap-2 shrink-0">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
@@ -810,7 +726,11 @@ const Accounting = () => {
         {filteredTransactions.length === 0 ? (
           <div className="px-6 py-10 text-center text-sm text-muted-foreground">
             <ListTree className="h-10 w-10 mx-auto mb-2 opacity-50" />
-            <p>No transactions yet. Use &quot;+ New transaction&quot; to record income and expenses.</p>
+            <p>
+              {accountingTab === "expenses"
+                ? "No approved DE orders in this date range. Approve orders under Oils → Order history, or widen the date filter above."
+                : 'No transactions yet. Use "+ New transaction" to record income and expenses.'}
+            </p>
           </div>
         ) : (
           <>

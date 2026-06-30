@@ -22,18 +22,27 @@ import {
   Package,
   Building2,
   Filter,
-  Plus,
   FileUp,
   ChevronDown,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { accountingApi } from "@/lib/api/accounting";
-import { ordersApi } from "@/lib/api/orders";
+import { fragranceApi } from "@/lib/api/fragrance";
 import { vendorsApi } from "@/lib/api/vendors";
-import type { AccountingTransaction, AccountingCategory, Vendor } from "@/types/database";
+import { useApprovedDeOrderExpenseSync } from "@/hooks/useApprovedDeOrderExpenseSync";
+import {
+  approvedDeExpenseRowAsTransaction,
+  buildApprovedDeExpenseRows,
+  filterApprovedDeExpenseRowsByDate,
+  getApprovedDeExpenseDisplayRange,
+  getYearToDateRange,
+  isIsoDateInRange,
+  toLocalIsoDate,
+} from "@/lib/utils/de-order-expenses";
+import type { AccountingTransaction, AccountingCategory, Vendor, ScentProforma } from "@/types/database";
 import { useMemo, useState, useRef, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 const formatCurrency = (amount: number) =>
   `R${amount.toLocaleString("en-ZA", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -56,18 +65,21 @@ const Expenses = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchParams] = useSearchParams();
 
+  useApprovedDeOrderExpenseSync();
+
   const { data: transactions = [], isLoading } = useQuery<AccountingTransaction[]>({
     queryKey: ["accountingTransactions"],
     queryFn: accountingApi.listTransactions,
   });
 
+  const { data: scentProformas = [] } = useQuery<ScentProforma[]>({
+    queryKey: ["scentProformas"],
+    queryFn: fragranceApi.listProformas,
+  });
+
   const { data: categories = [] } = useQuery<AccountingCategory[]>({
     queryKey: ["accountingCategories"],
     queryFn: accountingApi.listCategories,
-  });
-  const { data: orders = [] } = useQuery({
-    queryKey: ["orders"],
-    queryFn: ordersApi.list,
   });
   const { data: vendors = [] } = useQuery<Vendor[]>({
     queryKey: ["vendors"],
@@ -79,19 +91,19 @@ const Expenses = () => {
     [categories]
   );
 
+  const approvedDeExpenseRows = useMemo(
+    () => buildApprovedDeExpenseRows(scentProformas, transactions),
+    [scentProformas, transactions],
+  );
+
   const expenses = useMemo(
-    () => transactions.filter((t) => t.type === "expense"),
-    [transactions]
+    () => approvedDeExpenseRows.map((row) => approvedDeExpenseRowAsTransaction(row, transactions)),
+    [approvedDeExpenseRows, transactions],
   );
 
   const [activeTab, setActiveTab] = useState<TabId>("overview");
-  const [filterDateFrom, setFilterDateFrom] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    d.setDate(1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [filterDateTo, setFilterDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filterDateFrom, setFilterDateFrom] = useState(() => getYearToDateRange().from);
+  const [filterDateTo, setFilterDateTo] = useState(() => toLocalIsoDate());
   const [filterCategory, setFilterCategory] = useState("");
   const [filterCampaign, setFilterCampaign] = useState("");
   const [filterVendor, setFilterVendor] = useState("");
@@ -121,6 +133,34 @@ const Expenses = () => {
     if (openFilters) setShowFilters(true);
   }, [searchParams]);
 
+  const deRangeInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (deRangeInitializedRef.current) return;
+    if (approvedDeExpenseRows.length === 0) return;
+    deRangeInitializedRef.current = true;
+
+    const hasUrlDates = searchParams.get("from") || searchParams.get("to");
+    if (hasUrlDates) return;
+
+    const inRange = filterApprovedDeExpenseRowsByDate(
+      approvedDeExpenseRows,
+      filterDateFrom,
+      filterDateTo,
+    );
+    if (inRange.length > 0) return;
+
+    const range = getApprovedDeExpenseDisplayRange(scentProformas);
+    setFilterDateFrom(range.from);
+    setFilterDateTo(range.to);
+  }, [
+    approvedDeExpenseRows,
+    scentProformas,
+    filterDateFrom,
+    filterDateTo,
+    searchParams,
+  ]);
+
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AccountingTransaction | null>(null);
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
@@ -138,10 +178,7 @@ const Expenses = () => {
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((e) => {
-      const d = new Date(e.date);
-      const from = new Date(filterDateFrom);
-      const to = new Date(filterDateTo);
-      if (d < from || d > to) return false;
+      if (!isIsoDateInRange(e.date, filterDateFrom, filterDateTo)) return false;
       if (filterCategory && e.category_id !== filterCategory) return false;
       if (filterCampaign && (e.campaign || "").toLowerCase() !== filterCampaign.toLowerCase())
         return false;
@@ -174,13 +211,15 @@ const Expenses = () => {
     const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).getMonth();
     const prevYear = new Date(now.getFullYear(), now.getMonth() - 1, 1).getFullYear();
 
-    const inMonth = (t: AccountingTransaction, m: number, y: number) => {
-      const d = new Date(t.date);
-      return d.getMonth() === m && d.getFullYear() === y;
-    };
+    const monthKey = (y: number, m: number) =>
+      `${y}-${String(m + 1).padStart(2, "0")}`;
+    const curKey = monthKey(curYear, curMonth);
+    const prevKey = monthKey(prevYear, prevMonth);
+    const inMonthKey = (t: AccountingTransaction, key: string) =>
+      (t.date || "").slice(0, 7) === key;
 
-    const curMonthExpenses = expenses.filter((t) => inMonth(t, curMonth, curYear));
-    const prevMonthExpenses = expenses.filter((t) => inMonth(t, prevMonth, prevYear));
+    const curMonthExpenses = expenses.filter((t) => inMonthKey(t, curKey));
+    const prevMonthExpenses = expenses.filter((t) => inMonthKey(t, prevKey));
 
     const curTotal = curMonthExpenses.reduce((s, t) => s + Math.abs(t.amount), 0);
     const prevTotal = prevMonthExpenses.reduce((s, t) => s + Math.abs(t.amount), 0);
@@ -347,19 +386,18 @@ const Expenses = () => {
     <DashboardLayout>
       <PageHero
         eyebrow="Finance"
-        title="Expenses"
-        description="Track campaigns (online & offline), materials, operations, and all business spend in one place."
+        title="DE order expenses"
+        description="Approved fragrance purchase orders from Oils → Order history. Pending orders appear here only after you approve them in Oils."
         actions={
-          <Button onClick={() => openEditor()}>
-            <Plus className="h-4 w-4 mr-2" />
-            New expense
+          <Button variant="outline" asChild>
+            <Link to="/oils">Open Oils order history</Link>
           </Button>
         }
         aside={
           <div className="space-y-3">
-            <p className="luxury-note">Holistic view</p>
+            <p className="luxury-note">Approved DE orders only</p>
             <p className="text-lg leading-7 text-foreground">
-              Link expenses to campaigns, vendors, and categories. Use line items for material breakdowns. Receipts sync to the accounting ledger.
+              Each approved DE reference becomes one expense line. Upload receipts on a row to attach proof for accounting.
             </p>
           </div>
         }
@@ -588,7 +626,9 @@ const Expenses = () => {
             <div className="data-shell p-6">
               <h3 className="section-title text-base mb-4">Recent expenses</h3>
               {filteredExpenses.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No expenses in selected range.</p>
+                <p className="text-sm text-muted-foreground">
+                  No approved DE orders in this date range. Approve orders under Oils → Order history.
+                </p>
               ) : (
                 <table className="w-full text-sm">
                   <thead>
@@ -667,12 +707,19 @@ const Expenses = () => {
                           colSpan={8}
                           className="px-6 py-10 text-center text-sm text-muted-foreground"
                         >
-                          No expenses. Click &quot;+ New expense&quot;.
+                          No approved DE orders yet. Approve orders in Oils → Order history.
                         </td>
                       </tr>
                     ) : (
                       filteredExpenses.map((e, i) => {
                         const cat = expenseCategories.find((c) => c.id === e.category_id);
+                        const linkedRow = approvedDeExpenseRows.find(
+                          (row) =>
+                            row.transactionId === e.id ||
+                            row.id === e.id ||
+                            row.reference === e.reference,
+                        );
+                        const hasLedgerRow = !!linkedRow?.transactionId;
                         return (
                           <motion.tr
                             key={e.id}
@@ -694,31 +741,39 @@ const Expenses = () => {
                             <td className="px-6 py-4 text-muted-foreground text-xs">{e.reference || "-"}</td>
                             <td className="px-6 py-4">
                               <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-[11px]"
-                                  onClick={() => openEditor(e)}
-                                >
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-[11px]"
-                                  onClick={() => {
-                                    if (
-                                      !confirm(
-                                        `Delete "${e.description || e.date}"? This cannot be undone.`
-                                      )
-                                    )
-                                      return;
-                                    deleteMutation.mutate(e.id);
-                                  }}
-                                  disabled={deleteMutation.isPending}
-                                >
-                                  Delete
-                                </Button>
+                                {hasLedgerRow ? (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 px-2 text-[11px]"
+                                      onClick={() => openEditor(e)}
+                                    >
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 px-2 text-[11px]"
+                                      onClick={() => {
+                                        if (
+                                          !confirm(
+                                            `Delete "${e.description || e.date}"? This cannot be undone.`
+                                          )
+                                        )
+                                          return;
+                                        deleteMutation.mutate(e.id);
+                                      }}
+                                      disabled={deleteMutation.isPending}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    Syncing ledger…
+                                  </span>
+                                )}
                               </div>
                             </td>
                           </motion.tr>
@@ -854,7 +909,7 @@ const Expenses = () => {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit expense" : "Add expense"}</DialogTitle>
             <DialogDescription>
-              Record campaign spend, materials, operations, or any business spend. Use line items for material breakdowns.
+              Update receipt attachments or notes for this approved DE order expense.
             </DialogDescription>
           </DialogHeader>
 
@@ -903,23 +958,6 @@ const Expenses = () => {
                   </p>
                 )}
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Link to Order (optional)</Label>
-              <select
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={form.order_id}
-                onChange={(e) => setForm((f) => ({ ...f, order_id: e.target.value }))}
-              >
-                <option value="">— Not linked to an order —</option>
-                {orders.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {(o.reference || o.id).slice(0, 24)} · {o.customer_name || "Customer"} · R
-                    {Number(o.grand_total || 0).toFixed(2)}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

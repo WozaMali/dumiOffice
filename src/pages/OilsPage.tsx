@@ -24,6 +24,7 @@ import {
   drawPdfLetterhead,
   loadPdfLetterheadAssets,
 } from "@/lib/utils/pdf-letterhead";
+import { ensureDeOrderExpenseFromProforma } from "@/lib/utils/de-order-expenses";
 
 const NEW_LOGO_PATH = DUMI_LOGO_PATH;
 const IN_PROGRESS_SUFFIX = " (In progress)";
@@ -1390,39 +1391,10 @@ const OilsPage = () => {
       const created = await fragranceApi.createProforma(header, lines, extras);
       return { mode: "create" as const, ...created };
     },
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       toast.success("Order created from pro-forma");
       setEditingProformaId(null);
       proformaEditHydratedForIdRef.current = null;
-      const trimmedVendor = selectedVendorName.trim();
-      if (trimmedVendor && result?.header?.reference) {
-        try {
-          const categories = await accountingApi.listCategories();
-          const materialsCategory = categories.find(
-            (c) =>
-              c.kind === "expense" &&
-              /(material|packaging|raw|procurement|supplier|sourcing)/i.test(c.name || ""),
-          );
-          await accountingApi.createTransaction({
-            date:
-              vendorInvoiceDate ||
-              proformaDate ||
-              new Date().toISOString().slice(0, 10),
-            type: "expense",
-            category_id: materialsCategory?.id,
-            description: `DE Order ${result.header.reference} - ${trimmedVendor}`,
-            amount: -Math.abs(Number(result.header.total || 0)),
-            reference: result.header.reference,
-            vendor: trimmedVendor,
-            campaign: "DE Orders",
-            created_by: "Admin",
-          });
-          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
-        } catch (err) {
-          console.error("Failed to create linked DE expense", err);
-          toast.warning("DE order created, but linked expense could not be recorded automatically.");
-        }
-      }
       queryClient.invalidateQueries({ queryKey: ["scentProducts"] });
       queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
       queryClient.invalidateQueries({ queryKey: ["scentProformaLines"] });
@@ -1726,39 +1698,10 @@ const OilsPage = () => {
       );
       return created;
     },
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       toast.success("Order created (Essential Oils)");
       setEssentialOilRows([{ id: "eo-init", productName: null, sku: null, qty: "" }]);
       setEditingProformaId(null);
-      const trimmedVendor = selectedVendorName.trim();
-      if (trimmedVendor && result?.header?.reference) {
-        try {
-          const categories = await accountingApi.listCategories();
-          const materialsCategory = categories.find(
-            (c) =>
-              c.kind === "expense" &&
-              /(material|packaging|raw|procurement|supplier|sourcing)/i.test(c.name || ""),
-          );
-          await accountingApi.createTransaction({
-            date:
-              vendorInvoiceDate ||
-              proformaDate ||
-              new Date().toISOString().slice(0, 10),
-            type: "expense",
-            category_id: materialsCategory?.id,
-            description: `DE Order ${result.header.reference} - ${trimmedVendor}`,
-            amount: -Math.abs(Number(result.header.total || 0)),
-            reference: result.header.reference,
-            vendor: trimmedVendor,
-            campaign: "DE Orders",
-            created_by: "Admin",
-          });
-          queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
-        } catch (err) {
-          console.error("Failed to create linked DE expense", err);
-          toast.warning("DE order created, but linked expense could not be recorded automatically.");
-        }
-      }
       queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
     },
     onError: (err: any) => {
@@ -6095,8 +6038,13 @@ const OilsPage = () => {
                                 await fragranceApi.updateProforma(pf.id, {
                                   status: "approved",
                                 });
+                                await ensureDeOrderExpenseFromProforma({
+                                  ...pf,
+                                  status: "approved",
+                                });
                                 queryClient.invalidateQueries({ queryKey: ["scentProformas"] });
-                                toast.success("Order approved and marked as complete.");
+                                queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+                                toast.success("Order approved. Expense recorded in accounting.");
                               } catch (err: any) {
                                 toast.error(err.message || "Failed to approve order");
                               }

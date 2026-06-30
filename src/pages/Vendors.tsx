@@ -30,6 +30,13 @@ import {
 import { vendorsApi } from "@/lib/api/vendors";
 import { accountingApi } from "@/lib/api/accounting";
 import { fragranceApi } from "@/lib/api/fragrance";
+import { useApprovedDeOrderExpenseSync } from "@/hooks/useApprovedDeOrderExpenseSync";
+import {
+  buildApprovedDeExpenseRows,
+  listApprovedDeProformas,
+  normalizeDeRef,
+  isDeSequenceReference,
+} from "@/lib/utils/de-order-expenses";
 import type {
   AccountingAttachment,
   AccountingCategory,
@@ -61,12 +68,6 @@ const normalizeVendorKey = (s: string | null | undefined) =>
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-
-/** Normalized DE-###### reference for comparisons. */
-const normalizeDeRef = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
-
-const isDeSequenceReference = (s: string | null | undefined) =>
-  /^de-\d+$/i.test((s ?? "").trim());
 
 /** DE-###### tokens in free text (e.g. expense descriptions), lowercased. */
 const collectDeRefsInText = (s: string | null | undefined): Set<string> => {
@@ -127,6 +128,8 @@ const Vendors = () => {
       setExpenseReferenceFilter(searchParams.get("ref") ?? "");
     }
   }, [searchParams]);
+
+  useApprovedDeOrderExpenseSync();
 
   const { data: vendors = [], isLoading } = useQuery<Vendor[]>({
     queryKey: ["vendors"],
@@ -223,6 +226,16 @@ const Vendors = () => {
       toast.error(err?.message || "Failed to align expense vendor names."),
   });
 
+  const approvedDeProformas = useMemo(
+    () => listApprovedDeProformas(scentProformas),
+    [scentProformas],
+  );
+
+  const approvedDeExpenseRows = useMemo(
+    () => buildApprovedDeExpenseRows(scentProformas, transactions),
+    [scentProformas, transactions],
+  );
+
   const expenseRecords = useMemo(
     () =>
       transactions
@@ -249,7 +262,7 @@ const Vendors = () => {
 
   const proformaRefSet = useMemo(() => {
     const s = new Set<string>();
-    proformasDedupedByRef.forEach((pf) => {
+    approvedDeProformas.forEach((pf) => {
       const r = normalizeDeRef(pf.reference);
       if (r && isDeSequenceReference(pf.reference)) s.add(r);
     });
@@ -393,36 +406,35 @@ const Vendors = () => {
     return null;
   };
 
-  /** Oils order-history rows for the Expenses tab (same source as /oils Fragrance order history). */
-  const filteredProformaOrdersForExpensesTab = useMemo(() => {
+  /** Approved DE orders from Oils order history (canonical expense source). */
+  const filteredApprovedDeExpenseRows = useMemo(() => {
     const q = expenseReferenceFilter.trim().toLowerCase();
     const v = expenseVendorFilter.trim().toLowerCase();
-    return proformasDedupedByRef.filter((pf) => {
-      const pr = normalizeDeRef(pf.reference);
-      const supplier = (pf.customer_name || "").trim().toLowerCase();
-      const dir = resolveDirectoryVendorForProforma(pf);
-      const dirName = (dir?.name || "").trim().toLowerCase();
-      if (!q && !v) return true;
+    return approvedDeExpenseRows.filter((row) => {
+      const pr = normalizeDeRef(row.reference);
+      const supplier = row.vendor.toLowerCase();
+      const dir = scentProformas.find((pf) => pf.id === row.proformaId);
+      const dirVendor = dir ? resolveDirectoryVendorForProforma(dir) : null;
+      const dirName = (dirVendor?.name || "").trim().toLowerCase();
       if (q) {
         const refMatch = pr === q || pr.includes(q) || q.includes(pr);
         if (!refMatch) return false;
       }
-      if (v) {
-        if (supplier !== v && dirName !== v) return false;
-      }
+      if (v && supplier !== v && dirName !== v) return false;
       return true;
     });
   }, [
-    proformasDedupedByRef,
+    approvedDeExpenseRows,
     expenseReferenceFilter,
     expenseVendorFilter,
+    scentProformas,
     vendors,
     vendorByNormalizedName,
   ]);
 
   const proformaStatsByVendorId = useMemo(() => {
     const acc: Record<string, { count: number; total: number }> = {};
-    proformasDedupedByRef.forEach((pf) => {
+    approvedDeProformas.forEach((pf) => {
       const v = resolveDirectoryVendorForProforma(pf);
       if (!v) return;
       if (!acc[v.id]) acc[v.id] = { count: 0, total: 0 };
@@ -430,52 +442,59 @@ const Vendors = () => {
       acc[v.id].total += Number(pf.total ?? 0) || 0;
     });
     return acc;
-  }, [proformasDedupedByRef, vendors, vendorByNormalizedName]);
+  }, [approvedDeProformas, vendors, vendorByNormalizedName]);
 
   const proformaSpendInRange = useMemo(() => {
-    const inRange = proformasDedupedByRef.filter((pf) => {
-      const d = (pf.proforma_date || pf.created_at?.slice(0, 10) || "").toString();
-      return d >= summaryDateFrom && d <= summaryDateTo;
-    });
+    const inRange = approvedDeExpenseRows.filter(
+      (row) => row.date >= summaryDateFrom && row.date <= summaryDateTo,
+    );
     const byKey: Record<
       string,
       { label: string; count: number; total: number; inDirectory: boolean }
     > = {};
-    inRange.forEach((pf) => {
-      const v = resolveDirectoryVendorForProforma(pf);
-      const key = v?.id ?? `name:${normalizeVendorKey(pf.customer_name) || pf.id}`;
-        const label = v?.name ?? (pf.customer_name?.trim() || "Unknown supplier");
+    inRange.forEach((row) => {
+      const pf = scentProformas.find((p) => p.id === row.proformaId);
+      const v = pf ? resolveDirectoryVendorForProforma(pf) : null;
+      const key = v?.id ?? `name:${normalizeVendorKey(row.vendor) || row.proformaId}`;
+      const label = v?.name ?? (row.vendor.trim() || "Unknown supplier");
       const inDirectory = !!v;
       if (!byKey[key]) {
         byKey[key] = { label, count: 0, total: 0, inDirectory };
       }
       byKey[key].count += 1;
-      byKey[key].total += Number(pf.total ?? 0) || 0;
+      byKey[key].total += row.amount;
     });
     const rows = Object.entries(byKey)
       .map(([key, row]) => ({ key, ...row }))
       .sort((a, b) => b.total - a.total);
-    const rangeTotal = inRange.reduce((s, p) => s + (Number(p.total) || 0), 0);
+    const rangeTotal = inRange.reduce((s, row) => s + row.amount, 0);
     return { rows, rangeTotal, inRangeCount: inRange.length };
-  }, [proformasDedupedByRef, summaryDateFrom, summaryDateTo, vendors, vendorByNormalizedName]);
+  }, [
+    approvedDeExpenseRows,
+    summaryDateFrom,
+    summaryDateTo,
+    scentProformas,
+    vendors,
+    vendorByNormalizedName,
+  ]);
 
   const spendSummary = useMemo(() => {
-    const inRange = ledgerExpensesForVendorViews.filter(
-      (t) => t.date >= summaryDateFrom && t.date <= summaryDateTo,
+    const inRange = approvedDeExpenseRows.filter(
+      (row) => row.date >= summaryDateFrom && row.date <= summaryDateTo,
     );
     const byVendor = inRange.reduce<Record<string, { total: number; count: number }>>((acc, row) => {
       const key = (row.vendor || "Unassigned").trim() || "Unassigned";
       if (!acc[key]) acc[key] = { total: 0, count: 0 };
-      acc[key].total += Math.abs(row.amount);
+      acc[key].total += row.amount;
       acc[key].count += 1;
       return acc;
     }, {});
     const rows = Object.entries(byVendor)
       .map(([name, { total, count }]) => ({ name, total, count }))
       .sort((a, b) => b.total - a.total);
-    const rangeTotal = inRange.reduce((s, t) => s + Math.abs(t.amount), 0);
+    const rangeTotal = inRange.reduce((s, row) => s + row.amount, 0);
     return { rows, rangeTotal, inRangeCount: inRange.length };
-  }, [ledgerExpensesForVendorViews, summaryDateFrom, summaryDateTo]);
+  }, [approvedDeExpenseRows, summaryDateFrom, summaryDateTo]);
 
   const monthOnMonth = useMemo(() => {
     const now = new Date();
@@ -495,9 +514,9 @@ const Vendors = () => {
     const prevMonthTo = toLocalYmd(new Date(pYear, pMonth, compareDay));
 
     const sumIn = (from: string, to: string) =>
-      ledgerExpensesForVendorViews
-        .filter((t) => t.date >= from && t.date <= to)
-        .reduce((s, t) => s + Math.abs(t.amount), 0);
+      approvedDeExpenseRows
+        .filter((row) => row.date >= from && row.date <= to)
+        .reduce((s, row) => s + row.amount, 0);
 
     const currentPartial = sumIn(thisMonthFrom, thisMonthTo);
     const previousPartial = sumIn(prevMonthFrom, prevMonthTo);
@@ -514,54 +533,34 @@ const Vendors = () => {
       delta,
       pct,
     };
-  }, [ledgerExpensesForVendorViews]);
+  }, [approvedDeExpenseRows]);
 
   const metrics = useMemo(() => {
     const withContact = vendors.filter((v) => !!(v.contact_name || v.contact_phone || v.email)).length;
-    const byVendor = ledgerExpensesForVendorViews.reduce<Record<string, number>>((acc, row) => {
-      const key = row.vendor || "Unassigned";
-      acc[key] = (acc[key] ?? 0) + Math.abs(row.amount);
-      return acc;
-    }, {});
-    const topVendorFromExpensesOnly = Object.entries(byVendor).sort((a, b) => b[1] - a[1])[0];
 
-    const linkedProformas = proformasDedupedByRef.filter((pf) => {
+    const linkedProformas = approvedDeProformas.filter((pf) => {
       if (pf.vendor_id && vendors.some((v) => v.id === pf.vendor_id)) return true;
       if (pf.customer_name && vendorByNormalizedName.has(normalizeVendorKey(pf.customer_name)))
         return true;
       return false;
     });
-    /** Same scope as Vendor spend summary: ledger lines in range + DE order totals in range (no double count). */
-    const totalSpend = spendSummary.rangeTotal + proformaSpendInRange.rangeTotal;
+
+    const totalSpend = approvedDeExpenseRows.reduce((s, row) => s + row.amount, 0);
 
     let topVendorName = "-";
     let topVendorSpendAmt = 0;
     vendors.forEach((v) => {
-      const exp = expenseStatsByVendorId[v.id]?.total ?? 0;
       const pf = proformaStatsByVendorId[v.id]?.total ?? 0;
-      const combined = exp + pf;
-      if (combined > topVendorSpendAmt) {
-        topVendorSpendAmt = combined;
+      if (pf > topVendorSpendAmt) {
+        topVendorSpendAmt = pf;
         topVendorName = v.name;
       }
     });
-    if (topVendorSpendAmt === 0 && topVendorFromExpensesOnly?.[1]) {
-      topVendorName = topVendorFromExpensesOnly[0];
-      topVendorSpendAmt = topVendorFromExpensesOnly[1];
-    }
-
-    const proformaEvidenceWithoutLedger = proformasDedupedByRef.filter((pf) => {
-      const ref = (pf.reference || "").trim();
-      if (!ref) return false;
-      return !ledgerCoversProformaReference(pf.reference);
-    });
-    const totalExpenseRecords =
-      ledgerExpensesForVendorViews.length + proformaEvidenceWithoutLedger.length;
 
     return {
       total: vendors.length,
       withContact,
-      totalExpenseRecords,
+      totalExpenseRecords: approvedDeExpenseRows.length,
       totalSpend,
       topVendor: topVendorName,
       topVendorSpend: topVendorSpendAmt,
@@ -569,10 +568,9 @@ const Vendors = () => {
     };
   }, [
     vendors,
-    ledgerExpensesForVendorViews,
-    proformasDedupedByRef,
+    approvedDeProformas,
+    approvedDeExpenseRows,
     vendorByNormalizedName,
-    expenseStatsByVendorId,
     proformaStatsByVendorId,
   ]);
 
@@ -986,14 +984,8 @@ const Vendors = () => {
               <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
                 <Receipt className="h-4 w-4 shrink-0" />
                 <span>
-                  Expenses match a directory vendor when the vendor text is the same (ignoring case and
-                  extra spaces).
+                  Approved DE orders from Oils → Order history only (same as Accounting and Expenses).
                 </span>
-                {unmatchedExpenseLineCount > 0 && (
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {unmatchedExpenseLineCount} line(s) have no matching vendor name.
-                  </span>
-                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {expenseVendorFilter ? (
@@ -1027,10 +1019,7 @@ const Vendors = () => {
                   aria-label="Filter expenses by reference"
                 />
                 <span className="text-muted-foreground tabular-nums">
-                  {filteredExpenseRecords.length + filteredProformaOrdersForExpensesTab.length} shown
-                  {ledgerExpensesForVendorViews.length > 0
-                    ? ` · ${ledgerExpensesForVendorViews.length} ledger line(s) (DE orders use Oils history)`
-                    : ""}
+                  {filteredApprovedDeExpenseRows.length} approved order(s)
                 </span>
                 <Button
                   type="button"
@@ -1058,120 +1047,77 @@ const Vendors = () => {
             <table className="min-w-full text-xs">
               <thead>
                 <tr className="border-b border-border/40">
-                  <th className="px-4 py-3 text-left">Date</th>
+                  <th className="px-4 py-3 text-left">Description</th>
                   <th className="px-4 py-3 text-left">Vendor</th>
                   <th className="px-4 py-3 text-left">Directory</th>
-                  <th className="px-4 py-3 text-left">Description</th>
-                  <th className="px-4 py-3 text-left">Category</th>
-                  <th className="px-4 py-3 text-left">Order</th>
                   <th className="px-4 py-3 text-left">Reference</th>
-                  <th className="px-4 py-3 text-right">Amount</th>
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-right">Subtotal</th>
+                  <th className="px-4 py-3 text-right">VAT</th>
+                  <th className="px-4 py-3 text-right">Total</th>
+                  <th className="px-4 py-3 text-left">Order date</th>
+                  <th className="px-4 py-3 text-left">Invoice date</th>
                 </tr>
               </thead>
               <tbody>
-                {ledgerExpensesForVendorViews.length === 0 &&
-                proformasDedupedByRef.length === 0 &&
+                {approvedDeExpenseRows.length === 0 &&
                 !expenseReferenceFilter.trim() &&
                 !expenseVendorFilter.trim() ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                      No expenses yet. Create DE orders under Oils → Fragrance order history, or add
-                      non-DE expenses in Accounting / Expenses.
+                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
+                      No approved DE orders yet. Approve orders under Oils → Order history.
                     </td>
                   </tr>
-                ) : filteredExpenseRecords.length === 0 &&
-                  filteredProformaOrdersForExpensesTab.length === 0 ? (
+                ) : filteredApprovedDeExpenseRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                      Nothing matches this reference or vendor filter. Try clearing filters or adjust
-                      the reference.
+                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
+                      Nothing matches this reference or vendor filter.
                     </td>
                   </tr>
                 ) : (
-                  <>
-                    {filteredExpenseRecords.map((row) => {
-                      const category = categories.find((c) => c.id === row.category_id);
-                      const dirVendor = vendorByNormalizedName.get(
-                        normalizeVendorKey(row.vendor),
-                      );
-                      const nameDiffers =
-                        dirVendor &&
-                        (row.vendor || "").trim() !== dirVendor.name.trim();
-                      return (
-                        <tr key={row.id} className="border-b border-border/20">
-                          <td className="px-4 py-3 text-muted-foreground">{row.date}</td>
-                          <td className="px-4 py-3">{row.vendor || "—"}</td>
-                          <td className="px-4 py-3">
-                            {dirVendor ? (
-                              <span className="inline-flex flex-col gap-0.5">
-                                <Badge variant="outline" className="w-fit font-normal">
-                                  {dirVendor.name}
-                                </Badge>
-                                {nameDiffers && (
-                                  <span className="text-[10px] text-amber-600 dark:text-amber-400">
-                                    Use &quot;Align…&quot; to use exact directory spelling
-                                  </span>
-                                )}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground">{row.description || "-"}</td>
-                          <td className="px-4 py-3 text-muted-foreground">{category?.name || "-"}</td>
-                          <td className="px-4 py-3 text-muted-foreground">{row.order_id || "-"}</td>
-                          <td className="px-4 py-3 text-muted-foreground">{row.reference || "-"}</td>
-                          <td className="px-4 py-3 text-right font-medium">
-                            R{Math.abs(row.amount).toFixed(2)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {filteredProformaOrdersForExpensesTab.map((pf) => {
-                      const dir = resolveDirectoryVendorForProforma(pf);
-                      const dateStr = (
-                        pf.proforma_date ||
-                        pf.created_at?.slice(0, 10) ||
-                        ""
-                      ).toString();
-                      const hasLedgerTwin = ledgerCoversProformaReference(pf.reference);
-                      return (
-                        <tr
-                          key={`pf-order-history-${pf.id}`}
-                          className="border-b border-border/20 bg-muted/25"
-                        >
-                          <td className="px-4 py-3 text-muted-foreground">{dateStr || "—"}</td>
-                          <td className="px-4 py-3">{pf.customer_name || "—"}</td>
-                          <td className="px-4 py-3">
-                            {dir ? (
-                              <Badge variant="outline" className="font-normal">
-                                {dir.name}
+                  filteredApprovedDeExpenseRows.map((row) => {
+                    const pf = scentProformas.find((p) => p.id === row.proformaId);
+                    const dirVendor = pf ? resolveDirectoryVendorForProforma(pf) : null;
+                    const nameDiffers =
+                      dirVendor && row.vendor.trim() !== dirVendor.name.trim();
+                    return (
+                      <tr key={row.id} className="border-b border-border/20">
+                        <td className="px-4 py-3 text-muted-foreground">{row.description}</td>
+                        <td className="px-4 py-3">{row.vendor || "—"}</td>
+                        <td className="px-4 py-3">
+                          {dirVendor ? (
+                            <span className="inline-flex flex-col gap-0.5">
+                              <Badge variant="outline" className="w-fit font-normal">
+                                {dirVendor.name}
                               </Badge>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {hasLedgerTwin
-                              ? "Fragrance DE order (Oils order history — canonical; duplicate ledger lines hidden)."
-                              : "Fragrance DE order (Oils order history). No matching ledger line yet."}
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge variant="secondary" className="font-normal">
-                              Pro-forma
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground">—</td>
-                          <td className="px-4 py-3 font-mono text-muted-foreground">
-                            {pf.reference || "—"}
-                          </td>
-                          <td className="px-4 py-3 text-right font-medium tabular-nums">
-                            R{(Number(pf.total) || 0).toFixed(2)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </>
+                              {nameDiffers && (
+                                <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                  Supplier name differs from directory
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-muted-foreground">{row.reference}</td>
+                        <td className="px-4 py-3">
+                          <Badge variant="secondary" className="font-normal capitalize">
+                            {row.status}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          R{row.subtotal.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">R{row.vat.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right font-medium tabular-nums">
+                          R{row.amount.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">{row.date}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{row.invoiceDate || "—"}</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
