@@ -5,14 +5,19 @@ export type ImagePreset =
   | "card"
   | "pdp"
   | "hero"
+  | "homeCarousel"
   | "popup"
   | "personalisation";
 
-const PRESET_SIZES: Record<ImagePreset, { width: number; quality: number }> = {
+const PRESET_SIZES: Record<
+  ImagePreset,
+  { width: number; quality: number; height?: number }
+> = {
   thumb: { width: 320, quality: 70 },
   card: { width: 480, quality: 75 },
   pdp: { width: 960, quality: 80 },
   hero: { width: 1200, quality: 80 },
+  homeCarousel: { width: 1440, height: 614, quality: 80 },
   popup: { width: 800, quality: 75 },
   personalisation: { width: 600, quality: 80 },
 };
@@ -119,6 +124,7 @@ export function supabaseImageFromPreset(
   const size = PRESET_SIZES[preset];
   return supabaseStorageImageUrl(bucket, path, {
     width: size.width,
+    height: size.height,
     quality: size.quality,
     format: "webp",
   });

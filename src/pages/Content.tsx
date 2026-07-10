@@ -54,6 +54,7 @@ import {
   groupHeroSlidesByPage,
   HERO_PAGE_GROUPS,
   heroSlideCardImagePath,
+  isHomeCarouselSlide,
 } from "@/lib/utils/home-hero";
 import OptimizedImage from "@/components/OptimizedImage";
 import {
@@ -1218,6 +1219,15 @@ const Content = () => {
     if (candidates.length) return candidates[0];
     return heroSlides[0];
   }, [heroSlides]);
+  const isEditingHomeCarouselHero = useMemo(
+    () =>
+      isHomeCarouselSlide({
+        code: heroForm.code || editingHero?.code || "",
+        sort_order: editingHero?.sort_order ?? 0,
+        headline: heroForm.headline || editingHero?.headline || "Draft",
+      }),
+    [editingHero, heroForm.code, heroForm.headline],
+  );
   const activeLabelPosition =
     personalisationForm.categoryLabelPositions[previewCategory];
 
@@ -4002,6 +4012,7 @@ const Content = () => {
                               (heroForm.galleryImageUrls?.[0] ??
                                 editingHero?.background_image_url ??
                                 ""),
+                            isEditingHomeCarouselHero ? "homeCarousel" : "hero",
                           )})`,
                           backgroundSize: "cover",
                           backgroundPosition: "center",
@@ -4188,7 +4199,18 @@ const Content = () => {
                     <Label>Desktop background image</Label>
                     <p className="text-[11px] text-muted-foreground">
                       Upload to <code className="text-xs">hero-assets</code> bucket.
-                      Recommended <strong>2400×1350</strong> or <strong>1920×1080</strong> (16:9).
+                      {isEditingHomeCarouselHero ? (
+                        <>
+                          {" "}Home carousel crop is <strong>1440×614</strong> px.
+                          Recommended <strong>2880×1228</strong> (2×) or minimum{" "}
+                          <strong>1440×614</strong>.
+                        </>
+                      ) : (
+                        <>
+                          {" "}Recommended <strong>2400×1350</strong> or{" "}
+                          <strong>1920×1080</strong> (16:9).
+                        </>
+                      )}
                       Keep the main subject in the center 60% — edges crop on different screens.
                     </p>
                     <div className="flex items-center gap-3">
@@ -4241,7 +4263,10 @@ const Content = () => {
                     />
                     {heroForm.backgroundImageUrl && (
                       <img
-                        src={heroStorageImageUrl(heroForm.backgroundImageUrl)}
+                        src={heroStorageImageUrl(
+                          heroForm.backgroundImageUrl,
+                          isEditingHomeCarouselHero ? "homeCarousel" : "hero",
+                        )}
                         alt="Desktop hero preview"
                         className="mt-2 max-h-32 rounded-lg border border-border/60 object-cover"
                       />

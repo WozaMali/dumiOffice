@@ -181,6 +181,19 @@ Office loads all slides ordered by `sort_order`. The main app should show **ever
 3. Map fields to UI (kicker, headline, subheadline, CTAs, images)
 4. Resolve `background_image_url` from `hero-assets` bucket when needed
 
+### Desktop carousel image sizes (home carousel only)
+
+Applies only to **Home — Hero carousel** slides (`home-main`, `home-hero-*`, or `sort_order` &lt; 900). Content cards, gift guide, and other hero rows use standard 16:9 assets (2400×1350 or 1920×1080).
+
+The home hero carousel renders at **1440 × 614** px.
+
+| Field | Size | Aspect | Notes |
+|-------|------|--------|-------|
+| `background_image_url` | **2880 × 1228** px (recommended) or **1440 × 614** px (minimum) | ~2.35:1 | Desktop / tablet landscape carousel crop |
+| `background_image_url_mobile` | **1080 × 1920** px | 9:16 | Full-screen portrait hero on phones |
+
+Keep the main subject in the center 60% — edges get cropped on different screen sizes.
+
 ### SQL
 
 ```sql

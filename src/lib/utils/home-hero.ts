@@ -100,3 +100,22 @@ export function heroSlideCardImagePath(slide: HomeHeroSlide): string | null {
     null
   );
 }
+
+/** Home page hero carousel only (`home-main`, `home-hero-*`, sort_order &lt; 900). */
+export function isHomeCarouselSlide(
+  slide: Pick<HomeHeroSlide, "code" | "sort_order"> & Partial<HomeHeroSlide>,
+): boolean {
+  return (
+    heroSlidePageGroup({
+      code: slide.code || "draft",
+      sort_order: slide.sort_order ?? 999,
+      headline: slide.headline ?? "Draft",
+      is_active: slide.is_active ?? true,
+      id: slide.id ?? "",
+      created_at: slide.created_at ?? "",
+      updated_at: slide.updated_at ?? "",
+    }) === "home-carousel"
+  );
+}
+
+export const HOME_CAROUSEL_DESKTOP_SIZE = { width: 1440, height: 614 } as const;

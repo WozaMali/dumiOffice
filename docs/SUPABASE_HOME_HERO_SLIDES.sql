@@ -203,7 +203,8 @@ on conflict (code) do update set
 --   background_image_url_mobile = 'home-hero/images/mobile.jpg',
 --   updated_at = now()
 -- where code = 'put-your-name-on-it';
--- Desktop: 2400×1350 or 1920×1080 (16:9). Mobile: 1080×1920 (9:16). Keep subject in center 60%.
+-- Home carousel desktop: 2880×1228 or 1440×614. Home carousel mobile: 1080×1920 (9:16).
+-- Other hero slides/cards: use 2400×1350 or 1920×1080 (16:9). Keep subject in center 60%.
 
 -- Gift Guide page hero
 insert into public.home_hero_slides (
