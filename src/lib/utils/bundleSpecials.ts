@@ -1,4 +1,5 @@
 import type { BundleSpecialSlot, BundleSpecialWithSlots } from "@/types/database";
+import { normalizeCollectionHeroForStorage } from "@/lib/utils/product-lines";
 
 export type BundleCollectionCode = "mens" | "womens" | "unisex";
 
@@ -72,4 +73,20 @@ export function validateBundleSelections(
 /** Storefront route for a bundle */
 export function bundleSpecialPath(code: string): string {
   return `/specials/${code}`;
+}
+
+/**
+ * Normalize bundle hero paths for storage.
+ * Accepts bundle-specials/..., hero-assets/bundle-specials/..., full public URLs,
+ * and legacy bundles/... (rewritten to bundle-specials/...).
+ */
+export function normalizeBundleHeroForStorage(
+  url: string | undefined | null,
+): string | undefined {
+  const normalized = normalizeCollectionHeroForStorage(url);
+  if (!normalized) return undefined;
+  if (normalized.startsWith("bundles/")) {
+    return normalized.replace(/^bundles\//, "bundle-specials/");
+  }
+  return normalized;
 }

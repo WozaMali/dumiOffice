@@ -174,6 +174,22 @@ join (
 ) as s(bundle_code, slot_code, tab_label, collection_code, pick_count, sort_order)
   on b.code = s.bundle_code;
 
+-- Normalize legacy bundle hero paths (Office used bundles/ before bundle-specials/)
+update public.bundle_specials
+set
+  hero_image_url = replace(
+    regexp_replace(hero_image_url, '^hero-assets/', ''),
+    'bundles/',
+    'bundle-specials/'
+  ),
+  updated_at = now()
+where hero_image_url is not null
+  and (
+    hero_image_url like 'bundles/%'
+    or hero_image_url like 'hero-assets/bundles/%'
+    or hero_image_url like 'hero-assets/bundle-specials/%'
+  );
+
 notify pgrst, 'reload schema';
 
 select

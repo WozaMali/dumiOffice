@@ -31,6 +31,7 @@ import {
 import {
   BUNDLE_COLLECTION_OPTIONS,
   bundleSpecialPath,
+  normalizeBundleHeroForStorage,
   orderedBundleSlots,
   totalPickCount,
 } from "@/lib/utils/bundleSpecials";
@@ -59,7 +60,6 @@ import {
 } from "@/lib/utils/home-hero";
 import OptimizedImage from "@/components/OptimizedImage";
 import {
-  bundleStorageImageUrl,
   collectionStorageImageUrl,
   heroStorageImageUrl,
   productStorageImageUrl,
@@ -1071,7 +1071,7 @@ const Content = () => {
         subheadline: bundleForm.subheadline.trim() || null,
         description: bundleForm.description.trim() || null,
         hero_image_url:
-          normalizeCollectionHeroForStorage(bundleForm.heroImageUrl.trim()) || null,
+          normalizeBundleHeroForStorage(bundleForm.heroImageUrl.trim()) || null,
         bundle_price: Number(bundleForm.bundlePrice) || 0,
         compare_at_price: bundleForm.compareAtPrice.trim()
           ? Number(bundleForm.compareAtPrice)
@@ -1104,12 +1104,38 @@ const Content = () => {
 
   const bundleImageUploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      const code = bundleForm.code.trim() || editingBundle?.code || "bundle";
-      return bundleSpecialsApi.uploadHeroImage(file, code);
+      const code = bundleForm.code.trim() || editingBundle?.code;
+      if (!code) {
+        throw new Error("Bundle code is required before uploading an image.");
+      }
+
+      const path = await bundleSpecialsApi.uploadHeroImage(file, code);
+
+      if (editingBundle) {
+        await bundleSpecialsApi.saveHeroImagePath(editingBundle, path);
+      } else {
+        await bundleSpecialsApi.upsertBundle({
+          code,
+          name: bundleForm.name.trim() || code,
+          headline: bundleForm.headline.trim() || null,
+          subheadline: bundleForm.subheadline.trim() || null,
+          description: bundleForm.description.trim() || null,
+          hero_image_url: path,
+          bundle_price: Number(bundleForm.bundlePrice) || 0,
+          compare_at_price: bundleForm.compareAtPrice.trim()
+            ? Number(bundleForm.compareAtPrice)
+            : null,
+          is_active: bundleForm.isActive,
+          sort_order: Number(bundleForm.sortOrder) || 0,
+        });
+      }
+
+      return path;
     },
     onSuccess: (path) => {
       setBundleForm((f) => ({ ...f, heroImageUrl: path }));
-      toast.success("Bundle hero image uploaded.");
+      queryClient.invalidateQueries({ queryKey: ["bundleSpecials"] });
+      toast.success("Bundle hero image uploaded and saved.");
     },
     onError: (err: any) => {
       toast.error(err?.message || "Failed to upload bundle image.");
@@ -2099,14 +2125,48 @@ const Content = () => {
             const slotSummary = slots
               .map((s) => `${s.pick_count}× ${s.tab_label}`)
               .join(" + ");
+            const previewImage = bundle.hero_image_url?.trim();
             return (
               <div
                 key={bundle.id}
-                className="flex flex-col justify-between rounded-[1.5rem] border border-border/60 bg-background/40 p-4"
+                className="flex flex-col justify-between overflow-hidden rounded-[1.5rem] border border-border/60 bg-background/40"
               >
+                <div className="relative aspect-[16/10] overflow-hidden border-b border-border/60 bg-muted">
+                  {previewImage ? (
+                    <>
+                      <OptimizedImage
+                        {...(previewImage.startsWith("http")
+                          ? { src: previewImage }
+                          : { path: previewImage, bucket: "hero-assets" })}
+                        preset="bundleCard"
+                        alt={bundle.name}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent" />
+                      <div className="absolute inset-x-0 bottom-0 z-10 p-4">
+                        <p className="luxury-note text-white/80">{bundle.code}</p>
+                        <p className="line-clamp-1 text-sm font-medium text-white">
+                          {bundle.name}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+                      <Image size={22} className="opacity-60" />
+                      <p className="text-[11px]">No hero image yet</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-1 flex-col justify-between p-4">
                 <div className="space-y-2">
-                  <p className="luxury-note">{bundle.code}</p>
-                  <p className="text-sm font-medium text-foreground">{bundle.name}</p>
+                  {!previewImage && (
+                    <>
+                      <p className="luxury-note">{bundle.code}</p>
+                      <p className="text-sm font-medium text-foreground">{bundle.name}</p>
+                    </>
+                  )}
                   {bundle.headline && (
                     <p className="text-xs text-muted-foreground">{bundle.headline}</p>
                   )}
@@ -2124,6 +2184,11 @@ const Content = () => {
                   <p className="text-[10px] text-muted-foreground">
                     Storefront: {bundleSpecialPath(bundle.code)}
                   </p>
+                  {previewImage && (
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {previewImage}
+                    </p>
+                  )}
                 </div>
                 <div className="mt-3 flex items-center justify-between text-xs">
                   <span
@@ -2141,6 +2206,7 @@ const Content = () => {
                   >
                     Edit copy &amp; pricing
                   </Button>
+                </div>
                 </div>
               </div>
             );
@@ -4582,17 +4648,20 @@ const Content = () => {
               <p className="text-[11px] text-muted-foreground">
                 Upload to <code className="text-xs">hero-assets</code> bucket.
                 Recommended <strong>1280×800</strong> (16:10) for marquee cards.
-                Use a relative path like <code className="text-xs">bundles/mens-trio.jpg</code> — not{" "}
-                <code className="text-xs">hero-assets/bundles/...</code>.
+                Use a relative path like{" "}
+                <code className="text-xs">bundle-specials/mens-trio.jpg</code>,{" "}
+                <code className="text-xs">hero-assets/bundle-specials/mens-trio.jpg</code>, or a
+                full public Supabase URL.
                 If upload fails with 400, run{" "}
                 <code className="text-xs">docs/SUPABASE_HERO_ASSETS_STORAGE.sql</code>.
+                Upload saves the path to this bundle automatically.
               </p>
               <Input
                 value={bundleForm.heroImageUrl}
                 onChange={(e) =>
                   setBundleForm((f) => ({ ...f, heroImageUrl: e.target.value }))
                 }
-                placeholder="bundles/mens-trio.jpg"
+                placeholder="bundle-specials/mens-trio.jpg"
               />
               <Button
                 type="button"
@@ -4615,11 +4684,20 @@ const Content = () => {
                 }}
               />
               {bundleForm.heroImageUrl && (
-                <img
-                  src={bundleStorageImageUrl(bundleForm.heroImageUrl)}
-                  alt="Bundle hero"
-                  className="mt-2 max-h-32 rounded-lg border border-border/60 object-cover"
-                />
+                <div className="mt-2 overflow-hidden rounded-lg border border-border/60 bg-muted/30">
+                  <p className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Image preview
+                  </p>
+                  <div className="relative h-32 w-full bg-muted/50">
+                    <OptimizedImage
+                      path={bundleForm.heroImageUrl}
+                      bucket="hero-assets"
+                      preset="bundleCard"
+                      alt="Bundle hero"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                </div>
               )}
             </div>
 

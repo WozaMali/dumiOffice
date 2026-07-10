@@ -13,7 +13,7 @@ Examples:
 ## Setup (once)
 
 1. Run **`docs/SUPABASE_BUNDLE_SPECIALS.sql`** in Supabase SQL Editor.
-2. Run **`docs/SUPABASE_HERO_ASSETS_STORAGE.sql`** so Office can upload bundle images to `hero-assets/bundles/`.
+2. Run **`docs/SUPABASE_HERO_ASSETS_STORAGE.sql`** so Office can upload bundle images to `hero-assets/bundle-specials/`.
 
 You should see `bundle_count = 4`, `slot_count = 5`.
 
@@ -27,6 +27,36 @@ You should see `bundle_count = 4`, `slot_count = 5`.
 | `bundle_special_slots` | Tabs + pick rules (which `collection_code`, how many) |
 
 Products are **not** pre-linked. The storefront loads active products where `products.collection_code` matches each slot's `collection_code` (same as `/shop/mens`).
+
+### `hero_image_url` formats
+
+Store in `bundle_specials.hero_image_url` as one of:
+
+| Format | Example |
+|--------|---------|
+| Relative path (recommended) | `bundle-specials/mens-trio.jpg` |
+| With bucket prefix | `hero-assets/bundle-specials/mens-trio.jpg` |
+| Full public URL | `https://<project>.supabase.co/storage/v1/object/public/hero-assets/bundle-specials/mens-trio.jpg` |
+
+Office normalizes pasted URLs and legacy `bundles/...` paths to `bundle-specials/...` on save.
+
+```sql
+-- Fix legacy Office paths (safe to re-run)
+update public.bundle_specials
+set
+  hero_image_url = replace(
+    regexp_replace(hero_image_url, '^hero-assets/', ''),
+    'bundles/',
+    'bundle-specials/'
+  ),
+  updated_at = now()
+where hero_image_url is not null
+  and (
+    hero_image_url like 'bundles/%'
+    or hero_image_url like 'hero-assets/bundles/%'
+    or hero_image_url like 'hero-assets/bundle-specials/%'
+  );
+```
 
 ---
 

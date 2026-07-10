@@ -4,12 +4,13 @@ import type {
   BundleSpecialSlot,
   BundleSpecialWithSlots,
 } from "@/types/database";
+import { normalizeBundleHeroForStorage } from "@/lib/utils/bundleSpecials";
 
 export const BUNDLE_SPECIALS_SETUP_HINT =
   "Run docs/SUPABASE_BUNDLE_SPECIALS.sql in the Supabase SQL Editor, then refresh this page.";
 
 export const BUNDLE_STORAGE_SETUP_HINT =
-  "Run docs/SUPABASE_HERO_ASSETS_STORAGE.sql in Supabase SQL Editor so Office can upload bundle images to hero-assets/bundles/.";
+  "Run docs/SUPABASE_HERO_ASSETS_STORAGE.sql in Supabase SQL Editor so Office can upload bundle images to hero-assets/bundle-specials/.";
 
 function isMissingBundleTables(error: unknown): boolean {
   const err = error as { code?: string; message?: string; details?: string } | null;
@@ -121,7 +122,7 @@ export const bundleSpecialsApi = {
           headline: input.headline ?? null,
           subheadline: input.subheadline ?? null,
           description: input.description ?? null,
-          hero_image_url: input.hero_image_url ?? null,
+          hero_image_url: normalizeBundleHeroForStorage(input.hero_image_url) ?? null,
           bundle_price: input.bundle_price,
           compare_at_price: input.compare_at_price ?? null,
           is_active: input.is_active ?? true,
@@ -184,7 +185,7 @@ export const bundleSpecialsApi = {
     const ext = file.name.includes(".")
       ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
       : ".jpg";
-    const path = `bundles/${safeCode}${ext}`;
+    const path = `bundle-specials/${safeCode}${ext}`;
     const contentType =
       file.type ||
       (ext === ".png"
@@ -219,7 +220,34 @@ export const bundleSpecialsApi = {
       throw new Error(`${detail}.${hint}`);
     }
 
+    const { error: verifyError } = await supabase.storage.from(bucket).download(path);
+    if (verifyError) {
+      throw new Error(
+        `Upload completed but the file could not be read back (${verifyError.message}). ${BUNDLE_STORAGE_SETUP_HINT}`,
+      );
+    }
+
     return data.path;
+  },
+
+  async saveHeroImagePath(
+    bundle: BundleSpecial,
+    hero_image_url: string,
+  ): Promise<BundleSpecial> {
+    return this.upsertBundle({
+      code: bundle.code,
+      name: bundle.name,
+      headline: bundle.headline ?? null,
+      subheadline: bundle.subheadline ?? null,
+      description: bundle.description ?? null,
+      hero_image_url,
+      bundle_price: Number(bundle.bundle_price) || 0,
+      compare_at_price: bundle.compare_at_price ?? null,
+      is_active: bundle.is_active,
+      sort_order: bundle.sort_order ?? 0,
+      starts_at: bundle.starts_at ?? null,
+      ends_at: bundle.ends_at ?? null,
+    });
   },
 };
 

@@ -1,7 +1,7 @@
 -- hero-assets bucket for Office uploads (hero slides, collections, bundles, personalisation).
 -- Run in Supabase Dashboard → SQL Editor. Safe to re-run.
 --
--- Fixes Office upload 400s for paths like bundles/mens-trio.png when policies were missing.
+-- Fixes Office upload 400s for paths like bundle-specials/mens-trio.png when policies were missing.
 
 insert into storage.buckets (id, name, public)
 values ('hero-assets', 'hero-assets', true)

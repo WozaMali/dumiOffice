@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bundleUsesTabs,
+  normalizeBundleHeroForStorage,
   totalPickCount,
   validateBundleSelections,
 } from "@/lib/utils/bundleSpecials";
@@ -61,5 +62,22 @@ describe("bundleSpecials utils", () => {
       womens: ["c", "d"],
     });
     expect(bad.ok).toBe(false);
+  });
+
+  it("normalizes bundle hero image paths for storage", () => {
+    expect(normalizeBundleHeroForStorage("bundle-specials/mens-trio.jpg")).toBe(
+      "bundle-specials/mens-trio.jpg",
+    );
+    expect(
+      normalizeBundleHeroForStorage("hero-assets/bundle-specials/mens-trio.jpg"),
+    ).toBe("bundle-specials/mens-trio.jpg");
+    expect(
+      normalizeBundleHeroForStorage(
+        "https://example.supabase.co/storage/v1/object/public/hero-assets/bundle-specials/mens-trio.jpg",
+      ),
+    ).toBe("bundle-specials/mens-trio.jpg");
+    expect(normalizeBundleHeroForStorage("bundles/mens-trio.jpg")).toBe(
+      "bundle-specials/mens-trio.jpg",
+    );
   });
 });

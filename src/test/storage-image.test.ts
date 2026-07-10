@@ -55,8 +55,8 @@ describe("storage-image", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_IMAGE_TRANSFORMS", "true");
 
-    const url = bundleStorageImageUrl("bundles/mens-trio.png");
-    expect(url).toContain("/render/image/public/hero-assets/bundles/mens-trio.png");
+    const url = bundleStorageImageUrl("bundle-specials/mens-trio.png");
+    expect(url).toContain("/render/image/public/hero-assets/bundle-specials/mens-trio.png");
     expect(url).toContain("width=1280");
     expect(url).toContain("height=800");
   });
