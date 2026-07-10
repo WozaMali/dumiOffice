@@ -3,7 +3,13 @@
 export type OrderChannel = "Online Orders" | "Boutique & Pop-up" | "Wholesale" | "Returns";
 export type OrderStatus = "Processing" | "Shipped" | "Delivered" | "Cancelled" | "Returned";
 export type OrderStage = "Scheduled" | "In Progress" | "Completed";
-export type ProductCategory = "Perfume" | "Diffuser" | "Car Perfume";
+export type ProductCategory =
+  | "Perfume"
+  | "Diffuser"
+  | "Car Perfume"
+  | "Shower Gel"
+  | "Body Lotion"
+  | "Body Oil";
 export type PaymentStatus = "Pending" | "Paid" | "Refunded" | "Failed";
 export type CustomerType = "retail" | "wholesale" | "vip";
 export type CustomerChannel = "Online" | "Walk-In" | "Pop Up" | "Wholesale";
@@ -429,6 +435,8 @@ export interface Collection {
   tagline?: string;
   description?: string;
   hero_image_url?: string;
+  /** Storefront carousel reads this when Supabase is connected */
+  image?: string;
   is_active?: boolean;
   published_at?: string;
   created_at: string;

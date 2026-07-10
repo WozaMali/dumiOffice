@@ -27,6 +27,7 @@ import type {
   Address,
   Customer,
 } from "@/types/database";
+import { PRODUCT_CATEGORY_OPTIONS } from "@/lib/utils/product-lines";
 import { toast } from "sonner";
 import { validateEmail, validatePhone, validateStockAvailability, formatPhone } from "@/lib/utils/validation";
 import { generateOrdersCSV, downloadCSV, generateShippingLabels, printLabels, copyToClipboard } from "@/lib/utils/bulk-actions";
@@ -1913,9 +1914,11 @@ Status: ${order.status} (${order.stage})`;
                         handleLineChange("productId", "");
                       }}
                     >
-                      <option value="Perfume">Perfume</option>
-                      <option value="Diffuser">Diffuser</option>
-                      <option value="Car Perfume">Car Perfume</option>
+                      {PRODUCT_CATEGORY_OPTIONS.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div className="space-y-2">

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   collectionStorageImageUrl,
   encodeStoragePath,
+  fixSupabasePublicUrl,
   optimizeStoredPublicUrl,
   productStorageImageSrcSet,
   productStorageImageUrl,
@@ -47,6 +48,13 @@ describe("storage-image", () => {
     const optimized = optimizeStoredPublicUrl(original, "popup");
     expect(optimized).toContain("/render/image/public/hero-assets/popup.jpg");
     expect(optimized).toContain("width=800");
+  });
+
+  it("encodes spaces in public storage URLs", () => {
+    const raw =
+      "https://example.supabase.co/storage/v1/object/public/hero-assets/home-hero/images/file with spaces.png";
+    const fixed = fixSupabasePublicUrl(raw);
+    expect(fixed).toContain("file%20with%20spaces.png");
   });
 
   it("routes collection paths from product_assets when leading slash", () => {

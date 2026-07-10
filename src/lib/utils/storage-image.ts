@@ -30,8 +30,45 @@ export function encodeStoragePath(path: string): string {
   return path
     .split("/")
     .filter((segment) => segment.length > 0)
-    .map((segment) => encodeURIComponent(segment))
+    .map((segment) => encodeURIComponent(decodeURIComponent(segment)))
     .join("/");
+}
+
+/** Re-encode object paths in Supabase public URLs (fixes spaces in filenames). */
+export function fixSupabasePublicUrl(url: string): string {
+  if (!url.startsWith("http")) return url;
+
+  const objectMatch = url.match(
+    /^(https?:\/\/[^/]+)(\/storage\/v1\/object\/public\/)([^/]+)\/(.+)$/i,
+  );
+  if (objectMatch) {
+    const [, origin, prefix, bucket, objectPath] = objectMatch;
+    const cleanPath = objectPath.split("?")[0];
+    return `${origin}${prefix}${bucket}/${encodeStoragePath(decodeURIComponent(cleanPath))}`;
+  }
+
+  const renderMatch = url.match(
+    /^(https?:\/\/[^/]+)(\/storage\/v1\/render\/image\/public\/)([^/]+)\/(.+?)(\?.*)?$/i,
+  );
+  if (renderMatch) {
+    const [, origin, prefix, bucket, objectPath, query = ""] = renderMatch;
+    return `${origin}${prefix}${bucket}/${encodeStoragePath(decodeURIComponent(objectPath))}${query}`;
+  }
+
+  return encodeURI(url);
+}
+
+export function sanitizeStorageFileName(name: string): string {
+  const base = name.replace(/\.[^.]+$/, "");
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "";
+  const safe =
+    base
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9._-]/g, "")
+      .replace(/-+/g, "-")
+      .slice(0, 80) || "image";
+  return `${safe}${ext.toLowerCase()}`;
 }
 
 function normalizeStoragePath(path: string): string {
@@ -50,7 +87,7 @@ export function supabaseStorageImageUrl(
   },
 ): string {
   if (!path) return "";
-  if (path.startsWith("http")) return path;
+  if (path.startsWith("http")) return fixSupabasePublicUrl(path);
   if (path.startsWith("/")) return path;
 
   const base = supabaseUrl();
@@ -147,7 +184,7 @@ export function personalisationStorageImageUrl(
 export function collectionStorageImageUrl(path: string | null | undefined): string {
   if (!path) return "";
   if (path.startsWith("http")) {
-    return optimizeStoredPublicUrl(path, "card");
+    return optimizeStoredPublicUrl(fixSupabasePublicUrl(path), "card");
   }
   if (path.startsWith("/")) {
     return supabaseImageFromPreset(
@@ -157,6 +194,21 @@ export function collectionStorageImageUrl(path: string | null | undefined): stri
     );
   }
   return supabaseImageFromPreset("hero-assets", path, "card");
+}
+
+export function collectionStorageImageFallbackUrl(
+  path: string | null | undefined,
+): string {
+  if (!path) return "";
+  if (path.startsWith("http")) {
+    return fixSupabasePublicUrl(path);
+  }
+  if (path.startsWith("/")) {
+    return supabaseStorageImageUrl("product_assets", normalizeStoragePath(path), {
+      transform: false,
+    });
+  }
+  return supabaseStorageImageUrl("hero-assets", path, { transform: false });
 }
 
 /** Full public storage URLs saved in the database (popup, collections). */
@@ -192,16 +244,22 @@ export function optimizeStoredPublicUrl(
 
 export function storedPublicUrlFallback(url: string | null | undefined): string {
   if (!url) return "";
-  const objectMatch = url.match(/\/storage\/v1\/object\/public\/(.+)$/);
-  if (objectMatch) return url;
+  const fixed = fixSupabasePublicUrl(url);
+  const objectMatch = fixed.match(/\/storage\/v1\/object\/public\/(.+)$/);
+  if (objectMatch) return fixed;
 
-  const renderMatch = url.match(/\/storage\/v1\/render\/image\/public\/(.+?)(?:\?|$)/);
+  const renderMatch = fixed.match(/\/storage\/v1\/render\/image\/public\/(.+?)(?:\?|$)/);
   if (renderMatch) {
     const base = supabaseUrl();
     return base
       ? `${base}/storage/v1/object/public/${renderMatch[1]}`
-      : url;
+      : fixed;
   }
 
-  return url;
+  return fixed;
+}
+
+/** Non-transform public URL for storefront collection cards. */
+export function collectionHeroPublicUrl(path: string | null | undefined): string {
+  return collectionStorageImageFallbackUrl(path);
 }

@@ -22,7 +22,13 @@ function getInventoryGroup(p: Product): { key: string; label: string } {
   // Keep the same idea as `Content.tsx` but use inventory-friendly fields.
   if (p.product_category === "Diffuser") return { key: "diffusers", label: "Diffusers" };
   if (p.product_category === "Car Perfume")
-    return { key: "carDiffusers", label: "Car Diffusers" };
+    return { key: "carPerfume", label: "Car Perfume" };
+  if (p.product_category === "Shower Gel")
+    return { key: "showerGel", label: "Shower Gel" };
+  if (p.product_category === "Body Lotion")
+    return { key: "bodyLotion", label: "Body Lotion" };
+  if (p.product_category === "Body Oil")
+    return { key: "bodyOil", label: "Body Oil" };
 
   // Prefer the inventory "item" field since your export shows ITEM values like
   // "Men", "Female", and "Unisex".
@@ -163,7 +169,10 @@ export async function generateInventoryPDF(
     { key: "womens", label: "Women's Line", products: [] },
     { key: "unisex", label: "Unisex Line", products: [] },
     { key: "diffusers", label: "Diffusers", products: [] },
-    { key: "carDiffusers", label: "Car Diffusers", products: [] },
+    { key: "carPerfume", label: "Car Perfume", products: [] },
+    { key: "showerGel", label: "Shower Gel", products: [] },
+    { key: "bodyLotion", label: "Body Lotion", products: [] },
+    { key: "bodyOil", label: "Body Oil", products: [] },
     { key: "other", label: "Other", products: [] },
   ];
 

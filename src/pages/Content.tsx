@@ -44,6 +44,13 @@ import {
   type PersonalisationCategoryCode,
 } from "@/lib/utils/personalisation";
 import {
+  CONTENT_PRODUCT_SECTIONS,
+  groupContentProducts,
+  normalizeCollectionHeroForStorage,
+  PRODUCT_CATEGORY_OPTIONS,
+  STOREFRONT_COLLECTION_PRESETS,
+} from "@/lib/utils/product-lines";
+import {
   groupHeroSlidesByPage,
   HERO_PAGE_GROUPS,
   heroSlideCardImagePath,
@@ -210,55 +217,10 @@ const Content = () => {
     queryFn: productContentApi.list,
   });
 
-  const groupedContentProducts = (() => {
-    const groups: {
-      mens: Product[];
-      womens: Product[];
-      unisex: Product[];
-      diffusers: Product[];
-      carDiffusers: Product[];
-      other: Product[];
-    } = {
-      mens: [],
-      womens: [],
-      unisex: [],
-      diffusers: [],
-      carDiffusers: [],
-      other: [],
-    };
-
-    contentProducts.forEach((p) => {
-      // Product category drives the "line" grouping for non-perfume items.
-      if (p.product_category === "Diffuser") {
-        groups.diffusers.push(p);
-        return;
-      }
-      if (p.product_category === "Car Perfume") {
-        groups.carDiffusers.push(p);
-        return;
-      }
-
-      const raw =
-        (p.collection_code ??
-          (p.category as string | undefined) ??
-          (p.product_category as string | undefined) ??
-          "") || "";
-      const col = raw.toLowerCase();
-      const norm = col.replace(/[^a-z]/g, "");
-
-      if (norm.startsWith("men")) {
-        groups.mens.push(p);
-      } else if (norm.startsWith("women")) {
-        groups.womens.push(p);
-      } else if (norm.includes("unisex")) {
-        groups.unisex.push(p);
-      } else {
-        groups.other.push(p);
-      }
-    });
-
-    return groups;
-  })();
+  const groupedContentProducts = useMemo(
+    () => groupContentProducts(contentProducts),
+    [contentProducts],
+  );
 
   const { data: homeBestsellers = [] } = useQuery<HomeBestseller[]>({
     queryKey: ["homeBestsellers"],
@@ -584,19 +546,10 @@ const Content = () => {
 
   const upsertMutation = useMutation({
     mutationFn: async (payload: { code: string; slug?: string }) => {
-      let heroUrl = form.hero_image_url.trim() || undefined;
-      if (heroUrl && !heroUrl.startsWith("http")) {
-        const base = (import.meta as any).env?.VITE_SUPABASE_URL as string | undefined;
-        if (base) {
-          const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
-          heroUrl = heroUrl.startsWith("/")
-            ? `${base}/storage/v1/object/public/product_assets/${encodePath(heroUrl.slice(1))}`
-            : `${base}/storage/v1/object/public/hero-assets/${encodePath(heroUrl)}`;
-        }
-      }
+      const heroUrl = normalizeCollectionHeroForStorage(form.hero_image_url.trim());
       return collectionsApi.upsertByCode({
         code: payload.code,
-        slug: payload.slug,
+        slug: payload.slug ?? payload.code,
         name: form.name.trim(),
         tagline: form.tagline.trim() || undefined,
         description: form.description.trim() || undefined,
@@ -621,7 +574,8 @@ const Content = () => {
       toast.error("Name is required.");
       return;
     }
-    upsertMutation.mutate({ code: (editingCollection as any).code ?? editingCollection.slug, slug: editingCollection.slug });
+    const code = (editingCollection as Collection).code ?? editingCollection.slug;
+    upsertMutation.mutate({ code, slug: code });
   };
 
   const heroUpsertMutation = useMutation({
@@ -850,18 +804,19 @@ const Content = () => {
 
   const collectionImageUploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      return homeHeroApi.uploadImage(file);
+      if (!editingCollection) {
+        throw new Error("Open a collection before uploading.");
+      }
+      const code =
+        (editingCollection as Collection).code ?? editingCollection.slug;
+      return collectionsApi.uploadHeroImage(file, code);
     },
     onSuccess: (path) => {
-      const base = (import.meta as any).env?.VITE_SUPABASE_URL as string | undefined;
-      const fullUrl = base
-        ? `${base}/storage/v1/object/public/hero-assets/${path}`
-        : path;
       setForm((f) => ({
         ...f,
-        hero_image_url: fullUrl,
+        hero_image_url: path,
       }));
-      toast.success("Collection image uploaded.");
+      toast.success("Collection image uploaded to hero-assets.");
     },
     onError: (err: any) => {
       toast.error(err?.message || "Failed to upload collection image.");
@@ -1204,8 +1159,14 @@ const Content = () => {
     },
   });
 
-  const getCollectionByCode = (code: string): Collection | undefined =>
-    collections.find((c) => (c as any).code === code);
+  const getCollectionByCode = (code: string): Collection | undefined => {
+    const aliases =
+      code === "diffuser" ? new Set(["diffuser", "diffusers"]) : new Set([code]);
+    return collections.find((c) => {
+      const rowCode = ((c as Collection).code || c.slug || "").toLowerCase();
+      return aliases.has(rowCode);
+    });
+  };
 
   const activeHero = useMemo(() => {
     if (!heroSlides.length) return null;
@@ -2400,18 +2361,7 @@ const Content = () => {
         delay={0.28}
         className="mt-10"
       >
-        {[
-          { id: "mens", label: "Mens line", key: "mens" as const },
-          { id: "womens", label: "Womens line", key: "womens" as const },
-          { id: "unisex", label: "Unisex line", key: "unisex" as const },
-          { id: "diffusers", label: "Diffuser line", key: "diffusers" as const },
-          {
-            id: "carDiffusers",
-            label: "Car Diffuser line",
-            key: "carDiffusers" as const,
-          },
-          { id: "other", label: "Other products", key: "other" as const },
-        ].map((section) => {
+        {CONTENT_PRODUCT_SECTIONS.map((section) => {
           const products =
             groupedContentProducts[section.key].length > 0 || section.key !== "other"
               ? groupedContentProducts[section.key]
@@ -2655,8 +2605,9 @@ const Content = () => {
           {collectionsLoading ? (
             <p className="text-sm text-muted-foreground">Loading collections…</p>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              {["mens", "womens", "unisex", "diffusers"].map((code) => {
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {STOREFRONT_COLLECTION_PRESETS.map((preset) => {
+              const code = preset.code;
               const c = getCollectionByCode(code);
               const linkedProducts = c
                 ? (collectionProducts as any[]).filter(
@@ -2673,31 +2624,22 @@ const Content = () => {
                     <div className="relative mb-4 overflow-hidden rounded-2xl border border-border/60 bg-muted aspect-[4/3]">
                       {previewImage ? (
                         <>
-                          <motion.img
-                            src={collectionStorageImageUrl(previewImage)}
-                            alt={c?.name ?? code.toUpperCase()}
+                          <OptimizedImage
+                            path={previewImage}
+                            bucket="hero-assets"
+                            preset="thumb"
+                            alt={c?.name ?? preset.name}
                             className="h-full w-full object-cover"
-                            initial={{ scale: 1 }}
-                            animate={{ scale: 1.03 }}
-                            transition={{
-                              duration: 14,
-                              repeat: Infinity,
-                              repeatType: "reverse",
-                              ease: "easeInOut",
-                            }}
+                            loading="lazy"
+                            decoding="async"
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/20 to-transparent" />
                           <div className="absolute inset-x-0 bottom-0 z-10 p-3">
-                            <p className="luxury-note mb-1">
+                            <p className="luxury-note mb-1 text-white/80">
                               {code.toUpperCase()}
                             </p>
-                            <p className="text-sm font-medium text-foreground line-clamp-1">
-                              {c?.name ??
-                                (code === "mens"
-                                  ? "Men's Line"
-                                  : code === "womens"
-                                    ? "Women's Line"
-                                    : "Unisex Line")}
+                            <p className="line-clamp-1 text-sm font-medium text-white">
+                              {c?.name ?? preset.name}
                             </p>
                           </div>
                         </>
@@ -2711,14 +2653,7 @@ const Content = () => {
                       )}
                     </div>
                     <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                      {c?.tagline ??
-                        (code === "mens"
-                          ? "Structured signatures with warmth, woods, and presence."
-                          : code === "womens"
-                            ? "Polished florals and luminous amber compositions."
-                            : code === "diffusers"
-                              ? "Room-fresh sophistication, amplified."
-                              : "Modern, versatile luxury for everyday wear.")}
+                      {c?.tagline ?? c?.description ?? preset.tagline}
                     </p>
                     {linkedProducts.length > 0 && (
                       <div className="mt-4 space-y-1">
@@ -2777,14 +2712,9 @@ const Content = () => {
                             id: "",
                             code,
                             slug: code,
-                            name:
-                              code === "mens"
-                                ? "Men's Line"
-                                : code === "womens"
-                                  ? "Women's Line"
-                                  : "Unisex Line",
-                            tagline: undefined,
-                            description: undefined,
+                            name: preset.name,
+                            tagline: preset.tagline,
+                            description: preset.tagline,
                             hero_image_url: undefined,
                             created_at: "",
                             updated_at: "",
@@ -2864,6 +2794,11 @@ const Content = () => {
               </div>
               <div className="space-y-2">
                 <Label>Collection image</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Upload to <code className="text-xs">hero-assets</code> bucket (saved as{" "}
+                  <code className="text-xs">collections/&#123;code&#125;-hero.jpg</code>) or paste a
+                  relative path e.g. <code className="text-xs">collections/mens-hero.jpg</code>.
+                </p>
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"
@@ -2903,30 +2838,22 @@ const Content = () => {
                   onChange={(e) =>
                     setForm((f) => ({ ...f, hero_image_url: e.target.value }))
                   }
-                  placeholder="Optional: override with a full image URL"
+                  placeholder="collections/mens-hero.jpg or full public URL"
                 />
                 {form.hero_image_url && (
                   <div className="mt-3 rounded-xl border border-border/60 bg-muted/30 overflow-hidden">
                     <p className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                       Image preview
                     </p>
-                    <div className="relative h-36 w-full bg-muted/50 max-h-[180px]">
-                      <img
-                        src={heroStorageImageUrl(form.hero_image_url)}
+                    <div className="relative h-36 w-full max-h-[180px] bg-muted/50">
+                      <OptimizedImage
+                        {...(form.hero_image_url.startsWith("http")
+                          ? { src: form.hero_image_url }
+                          : { path: form.hero_image_url, bucket: "hero-assets" })}
+                        preset="card"
                         alt="Collection card"
                         className="h-full w-full object-cover object-center"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                          const next = (e.target as HTMLImageElement).nextElementSibling;
-                          if (next) (next as HTMLElement).style.display = "flex";
-                        }}
                       />
-                      <div
-                        className="absolute inset-0 hidden items-center justify-center p-4 text-center text-xs text-muted-foreground"
-                        style={{ display: "none" }}
-                      >
-                        Image could not be loaded. Check path or URL and bucket access.
-                      </div>
                     </div>
                   </div>
                 )}
@@ -3513,7 +3440,7 @@ const Content = () => {
                                   category: e.target.value,
                                 }))
                               }
-                              placeholder="men / women / unisex / diffuser / car-perfumes"
+                              placeholder="mens / womens / unisex / diffuser / car-perfumes / cosmetics"
                             />
                           </div>
                         </div>

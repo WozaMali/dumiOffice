@@ -20,10 +20,14 @@ export const collectionsApi = {
     description?: string;
     hero_image_url?: string;
   }): Promise<Collection> {
-    const payload = {
+    const payload: Record<string, unknown> = {
       ...input,
       slug: input.slug ?? input.code,
     };
+    // Storefront useFeaturedCollections reads `image` when Supabase is connected
+    if (input.hero_image_url !== undefined) {
+      payload.image = input.hero_image_url;
+    }
 
     const { data, error } = await supabase
       .from("collections")
@@ -33,6 +37,25 @@ export const collectionsApi = {
 
     if (error) throw error;
     return data as Collection;
+  },
+
+  /** Upload shop card image to hero-assets/collections/{code}-hero.{ext} */
+  async uploadHeroImage(file: File, collectionCode: string): Promise<string> {
+    const bucket = "hero-assets";
+    const ext = file.name.includes(".")
+      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
+      : ".jpg";
+    const path = `collections/${collectionCode}-hero${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(path, file, { upsert: true, contentType: file.type || undefined });
+
+    if (error || !data) {
+      throw error || new Error("Failed to upload collection image");
+    }
+
+    return data.path;
   },
 
   async listCollectionProducts(): Promise<

@@ -12,6 +12,7 @@ import { productsApi } from "@/lib/api/products";
 import { inventoryApi } from "@/lib/api/inventory";
 import { fragranceApi } from "@/lib/api/fragrance";
 import type { Product, ProductCategory, ScentProduct } from "@/types/database";
+import { PRODUCT_CATEGORY_OPTIONS, defaultCollectionCodeForCategory } from "@/lib/utils/product-lines";
 import { toast } from "sonner";
 import { downloadCSV, generateProductsCSV } from "@/lib/utils/bulk-actions";
 import { generateInventoryPDF } from "@/lib/utils/inventory-pdf";
@@ -331,6 +332,8 @@ const Inventory = () => {
     const threshold = Number(form.stock_threshold) || 0;
     const price = Number(form.price) || 0;
 
+    const collectionCode = defaultCollectionCodeForCategory(form.product_category);
+
     const newItem: Partial<Product> = {
       product_name: form.product_name.trim(),
       brand: form.brand.trim() || undefined,
@@ -345,6 +348,7 @@ const Inventory = () => {
       stock_threshold: threshold,
       description: form.description.trim() || undefined,
       is_active: true,
+      ...(collectionCode ? { collection_code: collectionCode } : {}),
     };
 
     createProductMutation.mutate(newItem);
@@ -357,6 +361,8 @@ const Inventory = () => {
     const stock = Number(form.stock_on_hand) || 0;
     const threshold = Number(form.stock_threshold) || 0;
     const price = Number(form.price) || 0;
+
+    const collectionCode = defaultCollectionCodeForCategory(form.product_category);
 
     const updates: Partial<Product> = {
       product_name: form.product_name.trim(),
@@ -371,6 +377,7 @@ const Inventory = () => {
       stock_on_hand: stock,
       stock_threshold: threshold,
       description: form.description.trim() || undefined,
+      ...(collectionCode ? { collection_code: collectionCode } : {}),
     };
 
     updateProductMutation.mutate({ id: editingProduct.id, updates });
@@ -765,9 +772,11 @@ const Inventory = () => {
                   value={form.product_category}
                   onChange={(e) => handleChange("product_category", e.target.value as ProductCategory)}
                 >
-                  <option value="Perfume">Perfume</option>
-                  <option value="Diffuser">Diffuser</option>
-                  <option value="Car Perfume">Car Perfume</option>
+                  {PRODUCT_CATEGORY_OPTIONS.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -885,9 +894,11 @@ const Inventory = () => {
                   value={form.product_category}
                   onChange={(e) => handleChange("product_category", e.target.value as ProductCategory)}
                 >
-                  <option value="Perfume">Perfume</option>
-                  <option value="Diffuser">Diffuser</option>
-                  <option value="Car Perfume">Car Perfume</option>
+                  {PRODUCT_CATEGORY_OPTIONS.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -1158,9 +1169,11 @@ const Inventory = () => {
             }
           >
             <option value="all">All categories</option>
-            <option value="Perfume">Perfume</option>
-            <option value="Diffuser">Diffuser</option>
-            <option value="Car Perfume">Car Perfume</option>
+            {PRODUCT_CATEGORY_OPTIONS.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
           </select>
           <select
             className="filter-control text-xs"
