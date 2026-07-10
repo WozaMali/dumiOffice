@@ -40,4 +40,10 @@ describe("product-lines", () => {
       ),
     ).toBe("home-hero/images/a.jpg");
   });
+
+  it("strips leading hero-assets/ prefix from relative paths", () => {
+    expect(normalizeCollectionHeroForStorage("hero-assets/bundles/mens-trio.jpg")).toBe(
+      "bundles/mens-trio.jpg",
+    );
+  });
 });

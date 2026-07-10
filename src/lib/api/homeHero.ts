@@ -26,6 +26,7 @@ export const homeHeroApi = {
     collection_code?: string;
     product_id?: string;
     background_image_url?: string;
+    background_image_url_mobile?: string;
     background_video_url?: string;
     gallery_image_urls?: string[];
     is_active?: boolean;
@@ -66,11 +67,26 @@ export const homeHeroApi = {
     return data.path;
   },
 
-  async uploadImage(file: File): Promise<string> {
+  async uploadImage(
+    file: File,
+    variant: "desktop" | "mobile" | "default" = "default",
+  ): Promise<string> {
     const bucket = "hero-assets";
-    const path = `home-hero/images/${Date.now()}-${file.name}`;
+    const ext = file.name.includes(".")
+      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
+      : ".jpg";
+    const prefix =
+      variant === "desktop"
+        ? "desktop"
+        : variant === "mobile"
+          ? "mobile"
+          : String(Date.now());
+    const path = `home-hero/images/${prefix}-${Date.now()}${ext}`;
 
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file);
+    const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
+      upsert: true,
+      contentType: file.type || undefined,
+    });
 
     if (error || !data) {
       throw error || new Error("Failed to upload hero image");

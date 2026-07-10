@@ -466,6 +466,7 @@ export interface HomeHeroSlide {
   collection_code?: string;
   product_id?: string;
   background_image_url?: string;
+  background_image_url_mobile?: string;
   background_video_url?: string;
   gallery_image_urls?: string[];
   image_rotation_seconds?: number;

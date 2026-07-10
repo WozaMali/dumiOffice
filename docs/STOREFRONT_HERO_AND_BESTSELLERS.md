@@ -16,6 +16,7 @@ This card is a **hero slide** row in `home_hero_slides`, not a separate table.
 | Title on card / overlay | `headline` | `Put Your Name On It` |
 | Description under title | `subheadline` | `Make it yours with a name on the label.` |
 | Hero background image | `background_image_url` | Set in Office Content editor |
+| Mobile hero background | `background_image_url_mobile` | Portrait 1080×1920 (9:16) for phones |
 | Gallery images | `gallery_image_urls` | Optional array |
 | CTA button label | `primary_cta_label` | `Request personalisation` |
 | CTA link | `primary_cta_href` | `/account` |
@@ -40,6 +41,7 @@ SELECT
   secondary_cta_label,
   secondary_cta_href,
   background_image_url,
+  background_image_url_mobile,
   background_video_url,
   gallery_image_urls,
   is_active,

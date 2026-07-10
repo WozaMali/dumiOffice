@@ -119,6 +119,7 @@ const Content = () => {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileImageInputRef = useRef<HTMLInputElement | null>(null);
   const collectionImageInputRef = useRef<HTMLInputElement | null>(null);
   const galleryImageInputRef = useRef<HTMLInputElement | null>(null);
   const productImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -298,6 +299,7 @@ const Content = () => {
     primaryCtaLabel: "",
     primaryCtaHref: "",
     backgroundImageUrl: "",
+    backgroundImageUrlMobile: "",
     galleryImageUrls: [] as string[],
   });
   const [editingBestseller, setEditingBestseller] =
@@ -522,6 +524,7 @@ const Content = () => {
       primaryCtaLabel: slide.primary_cta_label ?? "",
       primaryCtaHref: slide.primary_cta_href ?? "",
       backgroundImageUrl: slide.background_image_url ?? "",
+      backgroundImageUrlMobile: slide.background_image_url_mobile ?? "",
       galleryImageUrls: slide.gallery_image_urls ?? [],
     });
   };
@@ -539,10 +542,24 @@ const Content = () => {
       primaryCtaLabel: preset.primary_cta_label ?? "",
       primaryCtaHref: preset.primary_cta_href ?? "",
       backgroundImageUrl: "",
+      backgroundImageUrlMobile: "",
       galleryImageUrls: [],
     });
     setIsHeroDialogOpen(true);
   };
+
+  const emptyHeroForm = () => ({
+    code: "",
+    kicker: "",
+    headline: "",
+    subheadline: "",
+    body: "",
+    primaryCtaLabel: "",
+    primaryCtaHref: "",
+    backgroundImageUrl: "",
+    backgroundImageUrlMobile: "",
+    galleryImageUrls: [] as string[],
+  });
 
   const upsertMutation = useMutation({
     mutationFn: async (payload: { code: string; slug?: string }) => {
@@ -596,7 +613,12 @@ const Content = () => {
         body: heroForm.body.trim() || undefined,
         primary_cta_label: heroForm.primaryCtaLabel.trim() || undefined,
         primary_cta_href: heroForm.primaryCtaHref.trim() || undefined,
-        background_image_url: heroForm.backgroundImageUrl.trim() || undefined,
+        background_image_url: normalizeCollectionHeroForStorage(
+          heroForm.backgroundImageUrl.trim(),
+        ),
+        background_image_url_mobile: normalizeCollectionHeroForStorage(
+          heroForm.backgroundImageUrlMobile.trim(),
+        ),
         gallery_image_urls:
           heroForm.galleryImageUrls && heroForm.galleryImageUrls.length
             ? heroForm.galleryImageUrls
@@ -646,7 +668,7 @@ const Content = () => {
 
   const imageUploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      return homeHeroApi.uploadImage(file);
+      return homeHeroApi.uploadImage(file, "desktop");
     },
     onSuccess: (path) => {
       setHeroForm((f) => ({
@@ -657,6 +679,22 @@ const Content = () => {
     },
     onError: (err: any) => {
       toast.error(err?.message || "Failed to upload hero image.");
+    },
+  });
+
+  const mobileImageUploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      return homeHeroApi.uploadImage(file, "mobile");
+    },
+    onSuccess: (path) => {
+      setHeroForm((f) => ({
+        ...f,
+        backgroundImageUrlMobile: path,
+      }));
+      toast.success("Mobile hero image uploaded.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to upload mobile hero image.");
     },
   });
 
@@ -1023,7 +1061,8 @@ const Content = () => {
         headline: bundleForm.headline.trim() || null,
         subheadline: bundleForm.subheadline.trim() || null,
         description: bundleForm.description.trim() || null,
-        hero_image_url: bundleForm.heroImageUrl.trim() || null,
+        hero_image_url:
+          normalizeCollectionHeroForStorage(bundleForm.heroImageUrl.trim()) || null,
         bundle_price: Number(bundleForm.bundlePrice) || 0,
         compare_at_price: bundleForm.compareAtPrice.trim()
           ? Number(bundleForm.compareAtPrice)
@@ -1252,17 +1291,7 @@ const Content = () => {
             <Button
               onClick={() => {
                 setEditingHero(null);
-                setHeroForm({
-                  code: "",
-                  kicker: "",
-                  headline: "",
-                  subheadline: "",
-                  body: "",
-                  primaryCtaLabel: "",
-                  primaryCtaHref: "",
-                  backgroundImageUrl: "",
-                  galleryImageUrls: [],
-                });
+                setHeroForm(emptyHeroForm());
                 setIsHeroDialogOpen(true);
               }}
             >
@@ -1299,17 +1328,7 @@ const Content = () => {
               size="sm"
               onClick={() => {
                 setEditingHero(null);
-                setHeroForm({
-                  code: "",
-                  kicker: "",
-                  headline: "",
-                  subheadline: "",
-                  body: "",
-                  primaryCtaLabel: "",
-                  primaryCtaHref: "",
-                  backgroundImageUrl: "",
-                  galleryImageUrls: [],
-                });
+                setHeroForm(emptyHeroForm());
                 setIsHeroDialogOpen(true);
               }}
             >
@@ -3950,17 +3969,7 @@ const Content = () => {
           setIsHeroDialogOpen(open);
           if (!open) {
             setEditingHero(null);
-            setHeroForm({
-              code: "",
-              kicker: "",
-              headline: "",
-              subheadline: "",
-              body: "",
-              primaryCtaLabel: "",
-              primaryCtaHref: "",
-              backgroundImageUrl: "",
-              galleryImageUrls: [],
-            });
+            setHeroForm(emptyHeroForm());
           }
         }}
       >
@@ -4176,7 +4185,12 @@ const Content = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Background image</Label>
+                    <Label>Desktop background image</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Upload to <code className="text-xs">hero-assets</code> bucket.
+                      Recommended <strong>2400×1350</strong> or <strong>1920×1080</strong> (16:9).
+                      Keep the main subject in the center 60% — edges crop on different screens.
+                    </p>
                     <div className="flex items-center gap-3">
                       <Button
                         type="button"
@@ -4187,7 +4201,7 @@ const Content = () => {
                       >
                         {imageUploadMutation.isPending
                           ? "Uploading…"
-                          : "Upload image"}
+                          : "Upload desktop image"}
                       </Button>
                       {heroForm.backgroundImageUrl ? (
                         <span className="truncate text-[11px] text-muted-foreground">
@@ -4195,7 +4209,7 @@ const Content = () => {
                         </span>
                       ) : (
                         <span className="text-[11px] text-muted-foreground">
-                          No image selected yet
+                          No desktop image yet
                         </span>
                       )}
                     </div>
@@ -4208,7 +4222,6 @@ const Content = () => {
                       onChange={(e) => {
                         const files = Array.from(e.target.files ?? []);
                         if (!files.length) return;
-                        // First image becomes main background, rest go to gallery
                         imageUploadMutation.mutate(files[0]);
                         if (files.length > 1) {
                           galleryUploadMutation.mutate(files.slice(1));
@@ -4224,8 +4237,73 @@ const Content = () => {
                           backgroundImageUrl: e.target.value,
                         }))
                       }
-                      placeholder="Optional: override with a full image URL"
+                      placeholder="home-hero/images/desktop.jpg or full URL"
                     />
+                    {heroForm.backgroundImageUrl && (
+                      <img
+                        src={heroStorageImageUrl(heroForm.backgroundImageUrl)}
+                        alt="Desktop hero preview"
+                        className="mt-2 max-h-32 rounded-lg border border-border/60 object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Mobile background image</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Full-screen portrait hero on phones. Recommended <strong>1080×1920</strong> (9:16).
+                      Same center-safe framing as desktop.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => mobileImageInputRef.current?.click()}
+                        disabled={mobileImageUploadMutation.isPending}
+                      >
+                        {mobileImageUploadMutation.isPending
+                          ? "Uploading…"
+                          : "Upload mobile image"}
+                      </Button>
+                      {heroForm.backgroundImageUrlMobile ? (
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {heroForm.backgroundImageUrlMobile}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">
+                          No mobile image yet
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      ref={mobileImageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        mobileImageUploadMutation.mutate(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Input
+                      value={heroForm.backgroundImageUrlMobile}
+                      onChange={(e) =>
+                        setHeroForm((f) => ({
+                          ...f,
+                          backgroundImageUrlMobile: e.target.value,
+                        }))
+                      }
+                      placeholder="home-hero/images/mobile.jpg or full URL"
+                    />
+                    {heroForm.backgroundImageUrlMobile && (
+                      <img
+                        src={heroStorageImageUrl(heroForm.backgroundImageUrlMobile)}
+                        alt="Mobile hero preview"
+                        className="mt-2 max-h-40 w-24 rounded-lg border border-border/60 object-cover"
+                      />
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Gallery images</Label>
@@ -4273,17 +4351,7 @@ const Content = () => {
                       onClick={() => {
                         setEditingHero(null);
                         setIsHeroDialogOpen(false);
-                        setHeroForm({
-                          code: "",
-                          kicker: "",
-                          headline: "",
-                          subheadline: "",
-                          body: "",
-                          primaryCtaLabel: "",
-                          primaryCtaHref: "",
-                          backgroundImageUrl: "",
-                          galleryImageUrls: [],
-                        });
+                        setHeroForm(emptyHeroForm());
                       }}
                     >
                       Cancel
@@ -4471,13 +4539,19 @@ const Content = () => {
             </div>
 
             <div className="space-y-2">
-              <Label>Hero image path</Label>
+              <Label>Hero image</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Upload to <code className="text-xs">hero-assets</code> bucket.
+                Recommended <strong>1280×800</strong> (16:10) for marquee cards.
+                Use a relative path like <code className="text-xs">bundles/mens-trio.jpg</code> — not{" "}
+                <code className="text-xs">hero-assets/bundles/...</code>.
+              </p>
               <Input
                 value={bundleForm.heroImageUrl}
                 onChange={(e) =>
                   setBundleForm((f) => ({ ...f, heroImageUrl: e.target.value }))
                 }
-                placeholder="bundle-specials/mens-trio/hero.jpg"
+                placeholder="bundles/mens-trio.jpg"
               />
               <Button
                 type="button"

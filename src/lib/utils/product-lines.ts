@@ -156,5 +156,5 @@ export function normalizeCollectionHeroForStorage(url: string | undefined | null
   const renderMatch = trimmed.match(/\/storage\/v1\/render\/image\/public\/hero-assets\/(.+?)(?:\?|$)/i);
   if (renderMatch) return decodeURIComponent(renderMatch[1]);
 
-  return trimmed;
+  return trimmed.replace(/^hero-assets\//i, "");
 }

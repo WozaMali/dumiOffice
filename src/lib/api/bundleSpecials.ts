@@ -177,8 +177,14 @@ export const bundleSpecialsApi = {
 
   async uploadHeroImage(file: File, code: string): Promise<string> {
     const bucket = "hero-assets";
-    const path = `bundle-specials/${code}/${Date.now()}-${file.name}`;
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file);
+    const ext = file.name.includes(".")
+      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
+      : ".jpg";
+    const path = `bundles/${code}${ext}`;
+    const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
+      upsert: true,
+      contentType: file.type || undefined,
+    });
     if (error || !data) {
       throw error || new Error("Failed to upload bundle hero image");
     }

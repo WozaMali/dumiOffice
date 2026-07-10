@@ -31,6 +31,9 @@ create table if not exists public.home_hero_slides (
 alter table public.home_hero_slides
   add column if not exists image_rotation_seconds integer null;
 
+alter table public.home_hero_slides
+  add column if not exists background_image_url_mobile text null;
+
 -- Align product_id type with products.id, then add optional FK
 do $$
 declare
@@ -193,10 +196,14 @@ on conflict (code) do update set
   sort_order = excluded.sort_order,
   updated_at = now();
 
--- After uploading an image in Office (hero-assets bucket), set path like:
+-- After uploading images in Office (hero-assets bucket), set paths like:
 -- update public.home_hero_slides
--- set background_image_url = 'home-hero/images/your-file.jpg', updated_at = now()
+-- set
+--   background_image_url = 'home-hero/images/desktop.jpg',
+--   background_image_url_mobile = 'home-hero/images/mobile.jpg',
+--   updated_at = now()
 -- where code = 'put-your-name-on-it';
+-- Desktop: 2400×1350 or 1920×1080 (16:9). Mobile: 1080×1920 (9:16). Keep subject in center 60%.
 
 -- Gift Guide page hero
 insert into public.home_hero_slides (
