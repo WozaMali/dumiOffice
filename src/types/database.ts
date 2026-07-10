@@ -460,6 +460,7 @@ export interface HomeHeroSlide {
   background_image_url?: string;
   background_video_url?: string;
   gallery_image_urls?: string[];
+  image_rotation_seconds?: number;
   is_active: boolean;
   sort_order: number;
   created_at: string;
@@ -475,6 +476,102 @@ export interface HomeBestseller {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** Home page Client Notes testimonial cards */
+export interface HomeClientNote {
+  id: string;
+  client_name: string;
+  location: string;
+  quote: string;
+  rating: number;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Storefront /personalisation page settings
+export type PersonalisationCategoryCode = "mens" | "womens" | "unisex" | "diffuser";
+
+export interface PersonalisationSettings {
+  id: string;
+  code: string;
+  fee: number;
+  /** @deprecated Legacy single preview — use per-category fields */
+  preview_image_url?: string | null;
+  preview_image_mens?: string | null;
+  preview_image_womens?: string | null;
+  preview_image_unisex?: string | null;
+  preview_image_diffuser?: string | null;
+  /** @deprecated Legacy fallback — use per-category label_* fields */
+  label_top_pct: number;
+  label_left_pct: number;
+  label_width_pct: number;
+  label_top_pct_mens?: number | null;
+  label_left_pct_mens?: number | null;
+  label_width_pct_mens?: number | null;
+  label_top_pct_womens?: number | null;
+  label_left_pct_womens?: number | null;
+  label_width_pct_womens?: number | null;
+  label_top_pct_unisex?: number | null;
+  label_left_pct_unisex?: number | null;
+  label_width_pct_unisex?: number | null;
+  label_top_pct_diffuser?: number | null;
+  label_left_pct_diffuser?: number | null;
+  label_width_pct_diffuser?: number | null;
+  placeholder_text: string;
+  max_name_length: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonalisationFont {
+  id: string;
+  code: string;
+  label: string;
+  font_family: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Pick-and-mix bundle special (e.g. 3 men's for R599.99) */
+export interface BundleSpecial {
+  id: string;
+  code: string;
+  name: string;
+  headline?: string | null;
+  subheadline?: string | null;
+  description?: string | null;
+  hero_image_url?: string | null;
+  bundle_price: number;
+  compare_at_price?: number | null;
+  is_active: boolean;
+  sort_order: number;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One tab / pick group within a bundle (filters products by collection_code) */
+export interface BundleSpecialSlot {
+  id: string;
+  bundle_special_id: string;
+  slot_code: string;
+  tab_label: string;
+  collection_code: string;
+  pick_count: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BundleSpecialWithSlots extends BundleSpecial {
+  bundle_special_slots: BundleSpecialSlot[];
 }
 
 // Front-facing storefront popup configuration

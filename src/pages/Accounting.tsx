@@ -21,6 +21,7 @@ import {
   getYearToDateRange,
   isIsoDateInRange,
 } from "@/lib/utils/de-order-expenses";
+import { computeAccountingMetrics } from "@/lib/utils/accounting-metrics";
 import type {
   Order,
   Product,
@@ -36,9 +37,9 @@ import {
   Paperclip,
   RefreshCw,
   Target,
-  AlertCircle,
   Calendar,
   TrendingUp,
+  TrendingDown,
   Package,
   Trash2,
   Settings2,
@@ -215,50 +216,21 @@ const Accounting = () => {
     },
   });
 
-  const ordersInRange = useMemo(() => {
-    return orders.filter((o) => o.date >= dateFrom && o.date <= dateTo);
-  }, [orders, dateFrom, dateTo]);
-
   const transactionsInRange = useMemo(() => {
     return transactions.filter((t) => isIsoDateInRange(t.date, dateFrom, dateTo));
   }, [transactions, dateFrom, dateTo]);
 
-  const metrics = useMemo(() => {
-    // Revenue in this screen should come from accounting transactions,
-    // so "Clear ledger" correctly drives this metric even if old orders still exist.
-    const incomeTx = transactionsInRange.filter((t) => t.type === "income");
-    const expenseTx = transactionsInRange.filter((t) => t.type === "expense");
-
-    const salesIncome = incomeTx
-      .filter((t) => !!t.order_id)
-      .reduce((s, t) => s + t.amount, 0);
-    const manualIncome = incomeTx
-      .filter((t) => !t.order_id)
-      .reduce((s, t) => s + t.amount, 0);
-
-    const totalRevenue = salesIncome;
-    const paidRevenue = salesIncome;
-    const outstanding = ordersInRange
-      .filter((o) => o.payment_status === "Pending")
-      .reduce((sum, o) => sum + o.grand_total, 0);
-    const stockValue = products.reduce((sum, p) => sum + (p.price || 0) * p.stock_on_hand, 0);
-
-    const manualExpense = expenseTx
-      // if an expense was linked to an order, treat it as sales-linked
-      // (keeps the UI semantics consistent).
-      .filter((t) => !t.order_id)
-      .reduce((s, t) => s + t.amount, 0);
-
-    return {
-      totalRevenue,
-      paidRevenue,
-      outstanding,
-      stockValue,
-      manualIncome,
-      manualExpense,
-      pnlNet: manualIncome - manualExpense,
-    };
-  }, [ordersInRange, products, transactionsInRange]);
+  const metrics = useMemo(
+    () =>
+      computeAccountingMetrics({
+        transactions,
+        orders,
+        products,
+        dateFrom,
+        dateTo,
+      }),
+    [transactions, orders, products, dateFrom, dateTo],
+  );
 
   const filteredTransactions = useMemo(() => {
     if (accountingTab === "expenses") {
@@ -374,7 +346,7 @@ const Accounting = () => {
       <PageHero
         eyebrow="House Ledger"
         title="Financial signal in the same black, charcoal, and gold language."
-        description="Review revenue, outstanding balances, and manual entries in a ledger workspace that feels deliberate, calm, and premium."
+        description="Review revenue, expenses, net profit, and outstanding balances in a ledger workspace that feels deliberate, calm, and premium."
         actions={
           <>
             <Button size="sm" onClick={() => setTransactionPanelOpen((o) => !o)} className="gap-1.5">
@@ -394,10 +366,16 @@ const Accounting = () => {
           </>
         }
         aside={
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
               <p className="luxury-note">Revenue</p>
               <p className="mt-2 text-2xl font-display font-semibold text-foreground">{formatCurrency(metrics.paidRevenue)}</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
+              <p className="luxury-note">Net profit</p>
+              <p className={`mt-2 text-2xl font-display font-semibold ${metrics.netProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                {formatCurrency(metrics.netProfit)}
+              </p>
             </div>
             <div className="rounded-2xl border border-border/60 bg-background/40 px-4 py-3">
               <p className="luxury-note">Outstanding</p>
@@ -472,14 +450,38 @@ const Accounting = () => {
 
       {/* Overview metrics */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs flex-1 min-w-0">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 text-xs flex-1 min-w-0">
           <div className="metric-card">
             <span className="metric-label">Total revenue</span>
             <span className="metric-value flex items-center gap-2">
               <Banknote className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.paidRevenue)}
             </span>
-            <span className="metric-note">Paid in period</span>
+            <span className="metric-note">Paid sales in period</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Other income</span>
+            <span className="metric-value flex items-center gap-2">
+              <LineChart className="h-4 w-4 text-primary" />
+              {formatCurrency(metrics.manualIncome)}
+            </span>
+            <span className="metric-note">Manual &amp; non-order entries</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Total expenses</span>
+            <span className="metric-value flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-primary" />
+              {formatCurrency(metrics.totalExpense)}
+            </span>
+            <span className="metric-note">All expenses in period</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Net profit</span>
+            <span className={`metric-value flex items-center gap-2 ${metrics.netProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+              <TrendingUp className="h-4 w-4" />
+              {formatCurrency(metrics.netProfit)}
+            </span>
+            <span className="metric-note">All income minus all expenses</span>
           </div>
           <div className="metric-card">
             <span className="metric-label">Outstanding</span>
@@ -490,28 +492,14 @@ const Accounting = () => {
             <span className="metric-note">Pending in period</span>
           </div>
           <div className="metric-card">
-            <span className="metric-label">Ledger net</span>
-            <span className="metric-value flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-primary" />
-              {formatCurrency(metrics.manualIncome - metrics.manualExpense)}
-            </span>
-            <span className="metric-note">Income minus expense</span>
-          </div>
-          <div className="metric-card">
-            <span className="metric-label">P&amp;L (period)</span>
-            <span className={`metric-value flex items-center gap-2 ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-              <TrendingUp className="h-4 w-4" />
-              {formatCurrency(metrics.pnlNet)}
-            </span>
-            <span className="metric-note">Ledger income minus expense</span>
-          </div>
-          <div className="metric-card">
             <span className="metric-label">Stock value</span>
             <span className="metric-value flex items-center gap-2">
               <Package className="h-4 w-4 text-primary" />
               {formatCurrency(metrics.stockValue)}
             </span>
-            <span className="metric-note">Selling price × stock on hand</span>
+            <span className="metric-note">
+              Retail {formatCurrency(metrics.stockValue)} · Cost {formatCurrency(metrics.stockCostValue)}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -616,14 +604,19 @@ const Accounting = () => {
 
       {accountingTab === "expenses" && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3 text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3 text-xs">
             <div className="metric-card">
               <span className="metric-label">Total expenses</span>
-              <span className="metric-value">{formatCurrency(expensesInRange.reduce((s, t) => s + Math.abs(t.amount), 0))}</span>
+              <span className="metric-value">{formatCurrency(metrics.totalExpense)}</span>
             </div>
             <div className="metric-card">
-              <span className="metric-label">Profit after expenses</span>
-              <span className={`metric-value ${metrics.pnlNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.pnlNet)}</span>
+              <span className="metric-label">Net profit</span>
+              <span className={`metric-value ${metrics.netProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.netProfit)}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-label">Manual ledger net</span>
+              <span className={`metric-value ${metrics.ledgerNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(metrics.ledgerNet)}</span>
+              <span className="metric-note">Non-order entries only</span>
             </div>
             <div className="metric-card">
               <span className="metric-label">Top vendor cost</span>
@@ -783,6 +776,9 @@ const Accounting = () => {
                     <span>Total Records: {filteredTransactions.length}</span>
                     <span>Income: {formatCurrency(ledgerTotals.income)}</span>
                     <span>Expense: {formatCurrency(ledgerTotals.expense)}</span>
+                    <span className={ledgerTotals.income - ledgerTotals.expense >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                      Net: {formatCurrency(ledgerTotals.income - ledgerTotals.expense)}
+                    </span>
                     <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"

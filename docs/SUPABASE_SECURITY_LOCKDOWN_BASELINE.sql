@@ -25,6 +25,8 @@ begin
     'public.categories',
     'public.home_bestsellers',
     'public.home_hero_slides',
+    'public.personalisation_settings',
+    'public.personalisation_fonts',
     'public.media_assets'
   ]
   loop

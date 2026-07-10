@@ -591,14 +591,7 @@ const Orders = () => {
       // Automatically create an income accounting transaction for paid orders
       if (created.payment_status === "Paid") {
         try {
-          await accountingApi.createTransaction({
-            date: created.date,
-            type: "income" as AccountingTransactionType,
-            amount: created.grand_total,
-            currency: created.currency,
-            order_id: created.id,
-            reference: created.reference,
-          });
+          await accountingApi.ensureOrderIncomeTransaction(created);
           queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
         } catch (err) {
           console.error("Failed to create accounting transaction", err);
@@ -688,9 +681,15 @@ const Orders = () => {
         payment_status: "Paid",
         paid_at: new Date().toISOString(),
       }),
-    onSuccess: (updated) => {
+    onSuccess: async (updated) => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       setSelectedOrder(updated);
+      try {
+        await accountingApi.ensureOrderIncomeTransaction(updated);
+        queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
+      } catch (err) {
+        console.error("Failed to sync accounting income for paid order", err);
+      }
       toast.success("Payment marked as received.");
     },
     onError: (err: any) => {
@@ -717,14 +716,23 @@ const Orders = () => {
         await Promise.all(
           toMarkPaid.map(async (id) => {
             autoMarkedPaidRef.current.add(id);
-            await ordersApi.update(id, {
+            const order = orders.find((o) => o.id === id);
+            const updated = await ordersApi.update(id, {
               payment_status: "Paid",
               paid_at: new Date().toISOString(),
             });
+            if (order) {
+              try {
+                await accountingApi.ensureOrderIncomeTransaction(updated);
+              } catch (err) {
+                console.error("Failed to sync accounting income for auto-paid order", err);
+              }
+            }
           }),
         );
 
         await queryClient.invalidateQueries({ queryKey: ["orders"] });
+        await queryClient.invalidateQueries({ queryKey: ["accountingTransactions"] });
         toast.success(`Auto-marked ${toMarkPaid.length} order(s) as Paid from POP.`);
       } catch (err) {
         toMarkPaid.forEach((id) => autoMarkedPaidRef.current.delete(id));

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { frontPopupApi } from "@/lib/api/frontPopup";
+import OptimizedImage from "@/components/OptimizedImage";
 import type { FrontPopup } from "@/types/database";
 
 const STORAGE_PREFIX = "dumi:frontPopup:dismissedAt:";
@@ -73,7 +74,14 @@ export default function FrontPopupModal({ code = "home-entry" }: { code?: string
 
         {data.image_url && (
           <div className="h-52 w-full overflow-hidden storefront-media-bg">
-            <img src={data.image_url} alt={data.headline ?? "Popup"} className="h-full w-full object-cover" />
+            <OptimizedImage
+              src={data.image_url}
+              preset="popup"
+              loading="lazy"
+              decoding="async"
+              alt={data.headline ?? "Popup"}
+              className="h-full w-full object-cover"
+            />
           </div>
         )}
 

@@ -1,29 +1,72 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import PageHero from "@/components/PageHero";
+import { ContentSection } from "@/components/ContentSection";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Image, Sparkles, Clock, Edit, ExternalLink } from "lucide-react";
+import { Image, Sparkles, Clock, Edit, ExternalLink, Gift, MessageSquare } from "lucide-react";
 import { Link } from "react-router-dom";
 import { collectionsApi } from "@/lib/api/collections";
 import { productsApi } from "@/lib/api/products";
 import { homeHeroApi } from "@/lib/api/homeHero";
 import { homeBestsellersApi } from "@/lib/api/homeBestsellers";
+import {
+  homeClientNotesApi,
+  HOME_CLIENT_NOTES_SETUP_HINT,
+  isMissingHomeClientNotesTableError,
+} from "@/lib/api/homeClientNotes";
 import { productContentApi } from "@/lib/api/productContent";
 import { frontPopupApi } from "@/lib/api/frontPopup";
+import {
+  bundleSpecialsApi,
+  BUNDLE_SPECIALS_SETUP_HINT,
+  isMissingBundleTables,
+  type BundleSpecialSlotInput,
+} from "@/lib/api/bundleSpecials";
+import {
+  BUNDLE_COLLECTION_OPTIONS,
+  bundleSpecialPath,
+  orderedBundleSlots,
+  totalPickCount,
+} from "@/lib/utils/bundleSpecials";
+import { personalisationApi, PERSONALISATION_SETUP_HINT, isMissingPersonalisationTablesError } from "@/lib/api/personalisation";
+import {
+  PERSONALISATION_CATEGORIES,
+  categoryPreviewImagesFromSettings,
+  categoryLabelPositionsFromSettings,
+  emptyCategoryLabelPositions,
+  parseCategoryLabelPosition,
+  type PersonalisationCategoryCode,
+} from "@/lib/utils/personalisation";
+import {
+  groupHeroSlidesByPage,
+  HERO_PAGE_GROUPS,
+  heroSlideCardImagePath,
+} from "@/lib/utils/home-hero";
+import OptimizedImage from "@/components/OptimizedImage";
+import {
+  collectionStorageImageUrl,
+  heroStorageImageUrl,
+  productStorageImageUrl,
+} from "@/lib/utils/storage-image";
 import { supabase } from "@/lib/supabase";
 import type {
   Collection,
   HomeBestseller,
+  HomeClientNote,
   HomeHeroSlide,
   Product,
   ProductImage,
   ProductNote,
   FrontPopup,
+  PersonalisationFont,
+  PersonalisationSettings,
+  BundleSpecialWithSlots,
 } from "@/types/database";
 import { toast } from "sonner";
 
@@ -34,6 +77,36 @@ const statusColors: Record<string, string> = {
   Draft: "status-pill-muted",
 };
 
+const HERO_PRESETS = [
+  {
+    code: "fresh-in-store",
+    kicker: "New Arrivals",
+    headline: "Fresh In Store",
+    subheadline: "Just landed — the newest additions to the house.",
+    primary_cta_label: "Shop new arrivals",
+    primary_cta_href: "/shop/mens",
+    sort_order: 900,
+    is_active: true,
+  },
+  {
+    code: "put-your-name-on-it",
+    kicker: "Personalisation",
+    headline: "Put Your Name On It",
+    subheadline: "Make it yours with a name on the label.",
+    primary_cta_label: "Request personalisation",
+    primary_cta_href: "/personalisation",
+    sort_order: 910,
+    is_active: true,
+  },
+  {
+    code: "client-notes",
+    kicker: "Client Notes",
+    headline: "What people remember after the first wear.",
+    sort_order: 920,
+    is_active: true,
+  },
+] as const;
+
 const Content = () => {
   const queryClient = useQueryClient();
 
@@ -42,11 +115,40 @@ const Content = () => {
   const collectionImageInputRef = useRef<HTMLInputElement | null>(null);
   const galleryImageInputRef = useRef<HTMLInputElement | null>(null);
   const productImageInputRef = useRef<HTMLInputElement | null>(null);
+  const personalisationImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingUploadCategory, setPendingUploadCategory] =
+    useState<PersonalisationCategoryCode | null>(null);
+  const [previewCategory, setPreviewCategory] =
+    useState<PersonalisationCategoryCode>("mens");
 
   const { data: heroSlides = [] } = useQuery<HomeHeroSlide[]>({
     queryKey: ["homeHeroSlides"],
     queryFn: homeHeroApi.list,
   });
+
+  const heroSlidesByPage = useMemo(
+    () => groupHeroSlidesByPage(heroSlides),
+    [heroSlides],
+  );
+
+  const seededHeroPresetsRef = useRef(false);
+  useEffect(() => {
+    if (seededHeroPresetsRef.current) return;
+    if (!heroSlides) return;
+    if (heroSlides.length === 0) return;
+
+    const existing = new Set(heroSlides.map((s) => (s.code || "").trim()).filter(Boolean));
+    const missing = HERO_PRESETS.filter((p) => !existing.has(p.code));
+    if (missing.length === 0) {
+      seededHeroPresetsRef.current = true;
+      return;
+    }
+
+    seededHeroPresetsRef.current = true;
+    Promise.all(missing.map((p) => homeHeroApi.upsertByCode(p as any)))
+      .then(() => queryClient.invalidateQueries({ queryKey: ["homeHeroSlides"] }))
+      .catch((err) => console.error("Failed to seed hero presets", err));
+  }, [heroSlides, queryClient]);
 
   const { data: collections = [], isLoading: collectionsLoading } = useQuery<Collection[]>({
     queryKey: ["collections"],
@@ -62,6 +164,41 @@ const Content = () => {
     queryKey: ["frontPopup", "home-entry"],
     queryFn: () => frontPopupApi.getByCode("home-entry"),
   });
+
+  const {
+    data: personalisationSettings,
+    error: personalisationSettingsError,
+    isError: personalisationSettingsIsError,
+  } = useQuery<PersonalisationSettings | null>({
+    queryKey: ["personalisationSettings", "default"],
+    queryFn: () => personalisationApi.getSettings("default"),
+    retry: false,
+  });
+
+  const {
+    data: personalisationFonts = [],
+    error: personalisationFontsError,
+    isError: personalisationFontsIsError,
+  } = useQuery<PersonalisationFont[]>({
+    queryKey: ["personalisationFonts"],
+    queryFn: personalisationApi.listFonts,
+    retry: false,
+  });
+
+  const personalisationSetupError =
+    personalisationSettingsIsError || personalisationFontsIsError
+      ? String(
+          (personalisationSettingsError as Error | undefined)?.message ||
+            (personalisationFontsError as Error | undefined)?.message ||
+            "",
+        )
+      : null;
+
+  const personalisationTablesMissing =
+    (personalisationSettingsIsError &&
+      isMissingPersonalisationTablesError(personalisationSettingsError)) ||
+    (personalisationFontsIsError &&
+      isMissingPersonalisationTablesError(personalisationFontsError));
 
   const { data: products = [] } = useQuery<Product[]>({
     queryKey: ["products"],
@@ -128,6 +265,57 @@ const Content = () => {
     queryFn: homeBestsellersApi.list,
   });
 
+  const {
+    data: homeClientNotes = [],
+    error: homeClientNotesError,
+    isError: homeClientNotesIsError,
+  } = useQuery<HomeClientNote[]>({
+    queryKey: ["homeClientNotes"],
+    queryFn: homeClientNotesApi.list,
+    retry: false,
+  });
+
+  const clientNotesSetupError =
+    homeClientNotesIsError && isMissingHomeClientNotesTableError(homeClientNotesError)
+      ? HOME_CLIENT_NOTES_SETUP_HINT
+      : homeClientNotesIsError
+        ? String((homeClientNotesError as Error)?.message || "")
+        : null;
+
+  const clientNotesHeaderSlide = useMemo(
+    () => heroSlides.find((s) => s.code === "client-notes") ?? null,
+    [heroSlides],
+  );
+
+  useEffect(() => {
+    if (!clientNotesHeaderSlide) return;
+    setClientNotesHeaderForm({
+      kicker: clientNotesHeaderSlide.kicker || "Client Notes",
+      headline: clientNotesHeaderSlide.headline || "",
+    });
+  }, [
+    clientNotesHeaderSlide?.id,
+    clientNotesHeaderSlide?.kicker,
+    clientNotesHeaderSlide?.headline,
+  ]);
+
+  const {
+    data: bundleSpecials = [],
+    error: bundleSpecialsError,
+    isError: bundleSpecialsIsError,
+  } = useQuery<BundleSpecialWithSlots[]>({
+    queryKey: ["bundleSpecials"],
+    queryFn: bundleSpecialsApi.listWithSlots,
+    retry: false,
+  });
+
+  const bundleSetupError =
+    bundleSpecialsIsError && isMissingBundleTables(bundleSpecialsError)
+      ? BUNDLE_SPECIALS_SETUP_HINT
+      : bundleSpecialsIsError
+        ? String((bundleSpecialsError as Error)?.message || "")
+        : null;
+
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [editingHero, setEditingHero] = useState<HomeHeroSlide | null>(null);
   const [isHeroDialogOpen, setIsHeroDialogOpen] = useState(false);
@@ -162,6 +350,27 @@ const Content = () => {
     badgeLabel: "Bestseller",
     sortOrder: "0",
     isActive: true,
+  });
+  const [editingClientNote, setEditingClientNote] = useState<HomeClientNote | null>(null);
+  const [isClientNoteDialogOpen, setIsClientNoteDialogOpen] = useState(false);
+  const [clientNoteForm, setClientNoteForm] = useState<{
+    clientName: string;
+    location: string;
+    quote: string;
+    rating: string;
+    sortOrder: string;
+    isActive: boolean;
+  }>({
+    clientName: "",
+    location: "",
+    quote: "",
+    rating: "5",
+    sortOrder: "0",
+    isActive: true,
+  });
+  const [clientNotesHeaderForm, setClientNotesHeaderForm] = useState({
+    kicker: "Client Notes",
+    headline: "What people remember after the first wear.",
   });
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productPreviewImageUrl, setProductPreviewImageUrl] = useState<string | null>(null);
@@ -232,6 +441,51 @@ const Content = () => {
     isActive: true,
   });
 
+  const [personalisationForm, setPersonalisationForm] = useState({
+    fee: "20",
+    categoryPreviewImages: {
+      mens: "",
+      womens: "",
+      unisex: "",
+      diffuser: "",
+    } as Record<PersonalisationCategoryCode, string>,
+    categoryLabelPositions: emptyCategoryLabelPositions(),
+    placeholderText: "Your Name",
+    maxNameLength: "20",
+    isActive: true,
+    previewName: "Your Name",
+    previewFontFamily: '"Hiragenda", sans-serif',
+  });
+
+  const [fontEdits, setFontEdits] = useState<
+    Record<string, { label: string; fontFamily: string; isActive: boolean }>
+  >({});
+
+  const [editingBundle, setEditingBundle] = useState<BundleSpecialWithSlots | null>(null);
+  const [isBundleDialogOpen, setIsBundleDialogOpen] = useState(false);
+  const bundleImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [bundleForm, setBundleForm] = useState({
+    code: "",
+    name: "",
+    headline: "",
+    subheadline: "",
+    description: "",
+    heroImageUrl: "",
+    bundlePrice: "599.99",
+    compareAtPrice: "",
+    sortOrder: "0",
+    isActive: true,
+  });
+  const [bundleSlotForms, setBundleSlotForms] = useState<
+    Array<{
+      slot_code: string;
+      tab_label: string;
+      collection_code: string;
+      pick_count: string;
+      sort_order: string;
+    }>
+  >([]);
+
   useEffect(() => {
     if (frontPopup) {
       setPopupForm({
@@ -245,6 +499,45 @@ const Content = () => {
       });
     }
   }, [frontPopup]);
+
+  useEffect(() => {
+    if (personalisationSettings) {
+      setPersonalisationForm((f) => ({
+        ...f,
+        fee: String(personalisationSettings.fee ?? 20),
+        categoryPreviewImages: categoryPreviewImagesFromSettings(personalisationSettings),
+        categoryLabelPositions: categoryLabelPositionsFromSettings(personalisationSettings),
+        placeholderText: personalisationSettings.placeholder_text ?? "Your Name",
+        maxNameLength: String(personalisationSettings.max_name_length ?? 20),
+        isActive: personalisationSettings.is_active,
+        previewName: personalisationSettings.placeholder_text ?? "Your Name",
+      }));
+    }
+  }, [personalisationSettings]);
+
+  useEffect(() => {
+    if (personalisationFonts.length === 0) return;
+    setFontEdits((prev) => {
+      const next = { ...prev };
+      personalisationFonts.forEach((font) => {
+        if (!next[font.code]) {
+          next[font.code] = {
+            label: font.label,
+            fontFamily: font.font_family,
+            isActive: font.is_active,
+          };
+        }
+      });
+      return next;
+    });
+    const firstActive = personalisationFonts.find((f) => f.is_active);
+    if (firstActive) {
+      setPersonalisationForm((f) => ({
+        ...f,
+        previewFontFamily: firstActive.font_family,
+      }));
+    }
+  }, [personalisationFonts]);
 
   const editCollection = (collection: Collection) => {
     setEditingCollection(collection);
@@ -269,6 +562,24 @@ const Content = () => {
       backgroundImageUrl: slide.background_image_url ?? "",
       galleryImageUrls: slide.gallery_image_urls ?? [],
     });
+  };
+
+  const openHeroPreset = (code: typeof HERO_PRESETS[number]["code"]) => {
+    const preset = HERO_PRESETS.find((p) => p.code === code);
+    if (!preset) return;
+    setEditingHero(null);
+    setHeroForm({
+      code: preset.code,
+      kicker: preset.kicker ?? "",
+      headline: preset.headline ?? "",
+      subheadline: preset.subheadline ?? "",
+      body: "",
+      primaryCtaLabel: preset.primary_cta_label ?? "",
+      primaryCtaHref: preset.primary_cta_href ?? "",
+      backgroundImageUrl: "",
+      galleryImageUrls: [],
+    });
+    setIsHeroDialogOpen(true);
   };
 
   const upsertMutation = useMutation({
@@ -458,6 +769,85 @@ const Content = () => {
     },
   });
 
+  const clientNoteMutation = useMutation({
+    mutationFn: async () => {
+      if (!clientNoteForm.clientName.trim()) {
+        throw new Error("Client name is required.");
+      }
+      if (!clientNoteForm.location.trim()) {
+        throw new Error("Location is required.");
+      }
+      if (!clientNoteForm.quote.trim()) {
+        throw new Error("Quote is required.");
+      }
+      const rating = Math.min(5, Math.max(0, Number(clientNoteForm.rating) || 5));
+      const sort = Number(clientNoteForm.sortOrder || "0") || 0;
+      return homeClientNotesApi.upsert({
+        id: editingClientNote?.id,
+        client_name: clientNoteForm.clientName,
+        location: clientNoteForm.location,
+        quote: clientNoteForm.quote,
+        rating,
+        sort_order: sort,
+        is_active: clientNoteForm.isActive,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Client note saved.");
+      queryClient.invalidateQueries({ queryKey: ["homeClientNotes"] });
+      setEditingClientNote(null);
+      setIsClientNoteDialogOpen(false);
+      setClientNoteForm({
+        clientName: "",
+        location: "",
+        quote: "",
+        rating: "5",
+        sortOrder: "0",
+        isActive: true,
+      });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to save client note.");
+    },
+  });
+
+  const clientNoteDeleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return homeClientNotesApi.delete(id);
+    },
+    onSuccess: () => {
+      toast.success("Client note deleted.");
+      queryClient.invalidateQueries({ queryKey: ["homeClientNotes"] });
+      setEditingClientNote(null);
+      setIsClientNoteDialogOpen(false);
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to delete client note.");
+    },
+  });
+
+  const clientNotesHeaderMutation = useMutation({
+    mutationFn: async () => {
+      if (!clientNotesHeaderForm.headline.trim()) {
+        throw new Error("Section headline is required.");
+      }
+      return homeHeroApi.upsertByCode({
+        code: "client-notes",
+        kicker: clientNotesHeaderForm.kicker.trim() || "Client Notes",
+        headline: clientNotesHeaderForm.headline.trim(),
+        sort_order: clientNotesHeaderSlide?.sort_order ?? 920,
+        is_active: clientNotesHeaderSlide?.is_active ?? true,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Client Notes section header saved.");
+      queryClient.invalidateQueries({ queryKey: ["homeHeroSlides"] });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to save section header.");
+    },
+  });
+
   const collectionImageUploadMutation = useMutation({
     mutationFn: async (file: File) => {
       return homeHeroApi.uploadImage(file);
@@ -498,6 +888,228 @@ const Content = () => {
     },
     onError: (err: any) => {
       toast.error(err?.message || "Failed to save popup.");
+    },
+  });
+
+  const buildPersonalisationSettingsInput = (
+    categoryPreviewImages: Record<PersonalisationCategoryCode, string>,
+    categoryLabelPositions = personalisationForm.categoryLabelPositions,
+  ) => {
+    const mensPos = parseCategoryLabelPosition(categoryLabelPositions.mens);
+    const womensPos = parseCategoryLabelPosition(categoryLabelPositions.womens);
+    const unisexPos = parseCategoryLabelPosition(categoryLabelPositions.unisex);
+    const diffuserPos = parseCategoryLabelPosition(categoryLabelPositions.diffuser);
+
+    return {
+      code: "default" as const,
+      fee: Number(personalisationForm.fee || "20") || 20,
+      preview_image_mens: categoryPreviewImages.mens.trim() || null,
+      preview_image_womens: categoryPreviewImages.womens.trim() || null,
+      preview_image_unisex: categoryPreviewImages.unisex.trim() || null,
+      preview_image_diffuser: categoryPreviewImages.diffuser.trim() || null,
+      label_top_pct: mensPos.topPct,
+      label_left_pct: mensPos.leftPct,
+      label_width_pct: mensPos.widthPct,
+      label_top_pct_mens: mensPos.topPct,
+      label_left_pct_mens: mensPos.leftPct,
+      label_width_pct_mens: mensPos.widthPct,
+      label_top_pct_womens: womensPos.topPct,
+      label_left_pct_womens: womensPos.leftPct,
+      label_width_pct_womens: womensPos.widthPct,
+      label_top_pct_unisex: unisexPos.topPct,
+      label_left_pct_unisex: unisexPos.leftPct,
+      label_width_pct_unisex: unisexPos.widthPct,
+      label_top_pct_diffuser: diffuserPos.topPct,
+      label_left_pct_diffuser: diffuserPos.leftPct,
+      label_width_pct_diffuser: diffuserPos.widthPct,
+      placeholder_text: personalisationForm.placeholderText.trim() || "Your Name",
+      max_name_length: Number(personalisationForm.maxNameLength || "20") || 20,
+      is_active: personalisationForm.isActive,
+    };
+  };
+
+  const personalisationSaveMutation = useMutation({
+    mutationFn: async () => {
+      return personalisationApi.upsertSettings(
+        buildPersonalisationSettingsInput(personalisationForm.categoryPreviewImages),
+      );
+    },
+    onSuccess: async () => {
+      await Promise.all(
+        personalisationFonts.map((font) => {
+          const edit = fontEdits[font.code];
+          if (!edit) return Promise.resolve();
+          return personalisationApi.upsertFont({
+            code: font.code,
+            label: edit.label.trim() || font.label,
+            font_family: edit.fontFamily.trim() || font.font_family,
+            sort_order: font.sort_order,
+            is_active: edit.isActive,
+          });
+        }),
+      );
+      toast.success("Personalisation settings saved.");
+      queryClient.invalidateQueries({ queryKey: ["personalisationSettings", "default"] });
+      queryClient.invalidateQueries({ queryKey: ["personalisationFonts"] });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to save personalisation settings.");
+    },
+  });
+
+  const personalisationImageUploadMutation = useMutation({
+    mutationFn: async ({
+      file,
+      category,
+    }: {
+      file: File;
+      category: PersonalisationCategoryCode;
+    }) => personalisationApi.uploadPreviewImage(file, category),
+    onSuccess: async (path, { category }) => {
+      const nextImages = {
+        ...personalisationForm.categoryPreviewImages,
+        [category]: path,
+      };
+      setPersonalisationForm((f) => ({
+        ...f,
+        categoryPreviewImages: nextImages,
+      }));
+      setPreviewCategory(category);
+
+      try {
+        await personalisationApi.upsertSettings(
+          buildPersonalisationSettingsInput(nextImages, personalisationForm.categoryLabelPositions),
+        );
+        queryClient.invalidateQueries({
+          queryKey: ["personalisationSettings", "default"],
+        });
+        const label =
+          PERSONALISATION_CATEGORIES.find((c) => c.code === category)?.label ??
+          category;
+        toast.success(
+          `${label} bottle saved to hero-assets. Storefront will use it on /personalisation.`,
+        );
+      } catch (err: any) {
+        toast.error(
+          err?.message ||
+            "Image uploaded but path not saved — click Save personalisation settings.",
+        );
+      }
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to upload bottle image.");
+    },
+  });
+
+  const openBundleEditor = (bundle: BundleSpecialWithSlots) => {
+    setEditingBundle(bundle);
+    setBundleForm({
+      code: bundle.code,
+      name: bundle.name,
+      headline: bundle.headline ?? "",
+      subheadline: bundle.subheadline ?? "",
+      description: bundle.description ?? "",
+      heroImageUrl: bundle.hero_image_url ?? "",
+      bundlePrice: String(bundle.bundle_price ?? 0),
+      compareAtPrice:
+        bundle.compare_at_price != null ? String(bundle.compare_at_price) : "",
+      sortOrder: String(bundle.sort_order ?? 0),
+      isActive: bundle.is_active,
+    });
+    setBundleSlotForms(
+      orderedBundleSlots(bundle).map((slot) => ({
+        slot_code: slot.slot_code,
+        tab_label: slot.tab_label,
+        collection_code: slot.collection_code,
+        pick_count: String(slot.pick_count),
+        sort_order: String(slot.sort_order ?? 0),
+      })),
+    );
+    setIsBundleDialogOpen(true);
+  };
+
+  const openClientNoteEditor = (note?: HomeClientNote) => {
+    if (note) {
+      setEditingClientNote(note);
+      setClientNoteForm({
+        clientName: note.client_name,
+        location: note.location,
+        quote: note.quote,
+        rating: String(note.rating ?? 5),
+        sortOrder: String(note.sort_order ?? 0),
+        isActive: note.is_active,
+      });
+    } else {
+      setEditingClientNote(null);
+      const nextSort =
+        homeClientNotes.length > 0
+          ? Math.max(...homeClientNotes.map((n) => n.sort_order ?? 0)) + 1
+          : 1;
+      setClientNoteForm({
+        clientName: "",
+        location: "",
+        quote: "",
+        rating: "5",
+        sortOrder: String(nextSort),
+        isActive: true,
+      });
+    }
+    setIsClientNoteDialogOpen(true);
+  };
+
+  const bundleSaveMutation = useMutation({
+    mutationFn: async () => {
+      const code = bundleForm.code.trim();
+      if (!code) throw new Error("Bundle code is required.");
+
+      const bundle = await bundleSpecialsApi.upsertBundle({
+        code,
+        name: bundleForm.name.trim() || code,
+        headline: bundleForm.headline.trim() || null,
+        subheadline: bundleForm.subheadline.trim() || null,
+        description: bundleForm.description.trim() || null,
+        hero_image_url: bundleForm.heroImageUrl.trim() || null,
+        bundle_price: Number(bundleForm.bundlePrice) || 0,
+        compare_at_price: bundleForm.compareAtPrice.trim()
+          ? Number(bundleForm.compareAtPrice)
+          : null,
+        is_active: bundleForm.isActive,
+        sort_order: Number(bundleForm.sortOrder) || 0,
+      });
+
+      const slots: BundleSpecialSlotInput[] = bundleSlotForms.map((slot, index) => ({
+        slot_code: slot.slot_code.trim() || `slot-${index}`,
+        tab_label: slot.tab_label.trim() || slot.collection_code,
+        collection_code: slot.collection_code.trim() || "mens",
+        pick_count: Math.max(1, Number(slot.pick_count) || 1),
+        sort_order: Number(slot.sort_order) || index,
+      }));
+
+      await bundleSpecialsApi.replaceSlots(bundle.id, slots);
+      return bundle;
+    },
+    onSuccess: () => {
+      toast.success("Bundle special saved.");
+      queryClient.invalidateQueries({ queryKey: ["bundleSpecials"] });
+      setIsBundleDialogOpen(false);
+      setEditingBundle(null);
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to save bundle special.");
+    },
+  });
+
+  const bundleImageUploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const code = bundleForm.code.trim() || editingBundle?.code || "bundle";
+      return bundleSpecialsApi.uploadHeroImage(file, code);
+    },
+    onSuccess: (path) => {
+      setBundleForm((f) => ({ ...f, heroImageUrl: path }));
+      toast.success("Bundle hero image uploaded.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to upload bundle image.");
     },
   });
 
@@ -606,29 +1218,13 @@ const Content = () => {
     if (candidates.length) return candidates[0];
     return heroSlides[0];
   }, [heroSlides]);
-  const supabaseUrl =
-    (import.meta as any).env?.VITE_SUPABASE_URL as string | undefined;
+  const activeLabelPosition =
+    personalisationForm.categoryLabelPositions[previewCategory];
 
-  const encodeStoragePath = (path: string) =>
-    path.split("/").map(encodeURIComponent).join("/");
-
-  const resolveHeroImageUrl = (path?: string | null) => {
-    if (!path) return "";
-    if (path.startsWith("http")) return path;
-    if (path.startsWith("/")) return path;
-    if (!supabaseUrl) return path;
-    return `${supabaseUrl}/storage/v1/object/public/hero-assets/${encodeStoragePath(path)}`;
-  };
-
-  const resolveCollectionImageUrl = (path?: string | null) => {
-    if (!path) return "";
-    if (path.startsWith("http")) return path;
-    if (!supabaseUrl) return path;
-    if (path.startsWith("/")) {
-      return `${supabaseUrl}/storage/v1/object/public/product_assets/${encodeStoragePath(path.slice(1))}`;
-    }
-    return `${supabaseUrl}/storage/v1/object/public/hero-assets/${encodeStoragePath(path)}`;
-  };
+  const personalisationPreviewPath =
+    personalisationForm.categoryPreviewImages[previewCategory] ||
+    personalisationSettings?.preview_image_url ||
+    null;
 
   const pictureCards = useMemo(() => {
     if (!collectionProducts.length || !collections.length) return [];
@@ -723,149 +1319,183 @@ const Content = () => {
         }
       />
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="editorial-panel mb-8">
-        <div className="section-header">
-          <div className="flex items-center gap-3">
-            <Sparkles size={20} className="text-primary" />
-            <div>
-              <h2 className="section-title">Hero moments</h2>
-              <p className="section-copy">
-                Manage the wording and assets used for the home hero slides.
-              </p>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditingHero(null);
-              setHeroForm({
-                code: "",
-                kicker: "",
-                headline: "",
-                subheadline: "",
-                body: "",
-                primaryCtaLabel: "",
-                primaryCtaHref: "",
-                backgroundImageUrl: "",
-                galleryImageUrls: [],
-              });
-              setIsHeroDialogOpen(true);
-            }}
-          >
-            + Add hero slide
-          </Button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {heroSlides.map((slide, i) => {
-            const cardImage = resolveHeroImageUrl(
-              slide.background_image_url ||
-                (slide.gallery_image_urls &&
-                  slide.gallery_image_urls[0]),
-            );
-            return (
-            <motion.div
-            key={slide.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 + i * 0.1 }}
-              className="overflow-hidden rounded-[1.5rem] border border-border/60 bg-background/35 transition-colors hover:border-primary/30 cursor-pointer"
+      <ContentSection
+        id="hero-moments"
+        title="Hero moments"
+        description="Manage hero slides grouped by storefront page — carousel, home cards, gift guide, and more."
+        icon={<Sparkles size={20} className="text-primary shrink-0" />}
+        delay={0.1}
+        className="mb-8"
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => openHeroPreset("fresh-in-store")}>
+              + Fresh In Store
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => openHeroPreset("put-your-name-on-it")}>
+              + Put Your Name On It
+            </Button>
+            <Button
+              size="sm"
               onClick={() => {
-                editHero(slide);
+                setEditingHero(null);
+                setHeroForm({
+                  code: "",
+                  kicker: "",
+                  headline: "",
+                  subheadline: "",
+                  body: "",
+                  primaryCtaLabel: "",
+                  primaryCtaHref: "",
+                  backgroundImageUrl: "",
+                  galleryImageUrls: [],
+                });
                 setIsHeroDialogOpen(true);
               }}
             >
-              <div className="relative aspect-video overflow-hidden bg-muted">
-                {cardImage ? (
-                  <>
-                    <motion.img
-                      src={cardImage}
-                      alt={slide.headline}
-                      className="h-full w-full object-cover"
-                      initial={{ scale: 1 }}
-                      animate={{ scale: 1.03 }}
-                      transition={{
-                        duration: 14,
-                        repeat: Infinity,
-                        repeatType: "reverse",
-                        ease: "easeInOut",
-                      }}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-                    <div className="absolute inset-x-0 bottom-0 z-10 p-4">
-                      <p className="text-sm font-medium text-foreground line-clamp-2">
-                        {slide.headline}
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/15 via-background/30 to-accent/25">
-                    <Image className="h-6 w-6 text-muted-foreground" />
+              + Add hero slide
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-8">
+          {HERO_PAGE_GROUPS.map((group) => {
+            const slides = heroSlidesByPage[group.id];
+            if (!slides.length) return null;
+
+            return (
+              <div key={group.id} className="space-y-3">
+                <div className="flex flex-wrap items-end justify-between gap-2 border-b border-border/50 pb-3">
+                  <div>
+                    <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-foreground">
+                      {group.label}
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{group.description}</p>
                   </div>
-                )}
-                {!slide.is_active && (
-                  <div className="absolute right-3 top-3 z-20">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 px-3 text-[11px]"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!confirm("Delete this inactive hero card? This cannot be undone.")) return;
-                        heroDeleteMutation.mutate(slide.id);
-                      }}
-                      disabled={heroDeleteMutation.isPending}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                )}
-              </div>
-              <div className="p-4">
-                {slide.kicker && (
-                  <p className="mb-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                    {slide.kicker}
-                  </p>
-                )}
-                {slide.subheadline && (
-                  <p className="text-xs text-muted-foreground line-clamp-2">
-                    {slide.subheadline}
-                  </p>
-                )}
-                <div className="mt-2 flex items-center justify-between">
-                  <span
-                    className={
-                      slide.is_active ? statusColors.Active : statusColors.Draft
-                    }
-                  >
-                    {slide.is_active ? "Active" : "Draft"}
-                  </span>
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock size={10} />{" "}
-                    {new Date(slide.updated_at).toLocaleDateString()}
+                  <span className="text-xs text-muted-foreground">
+                    {slides.length} slide{slides.length === 1 ? "" : "s"}
                   </span>
                 </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {slides.map((slide, i) => {
+                    const cardImagePath = heroSlideCardImagePath(slide);
+
+                    return (
+                      <motion.div
+                        key={slide.id}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: Math.min(i * 0.04, 0.24) }}
+                        className="cursor-pointer overflow-hidden rounded-[1.5rem] border border-border/60 bg-background/35 transition-colors hover:border-primary/30"
+                        onClick={() => {
+                          editHero(slide);
+                          setIsHeroDialogOpen(true);
+                        }}
+                      >
+                        <div className="relative aspect-video overflow-hidden bg-muted">
+                          {cardImagePath ? (
+                            <>
+                              <OptimizedImage
+                                path={cardImagePath}
+                                bucket="hero-assets"
+                                preset="thumb"
+                                alt={slide.headline}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                              <div className="absolute inset-x-0 bottom-0 z-10 p-4">
+                                <p className="line-clamp-2 text-sm font-medium text-white">
+                                  {slide.headline}
+                                </p>
+                                {slide.code && (
+                                  <p className="mt-1 truncate text-[10px] uppercase tracking-[0.14em] text-white/70">
+                                    {slide.code}
+                                  </p>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary/15 via-background/30 to-accent/25 px-4 text-center">
+                              <Image className="h-6 w-6 text-muted-foreground" />
+                              <p className="line-clamp-2 text-sm font-medium text-foreground">
+                                {slide.headline}
+                              </p>
+                              {slide.code && (
+                                <p className="truncate text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                                  {slide.code}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          {!slide.is_active && (
+                            <div className="absolute right-3 top-3 z-20">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-3 text-[11px]"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (
+                                    !confirm(
+                                      "Delete this inactive hero card? This cannot be undone.",
+                                    )
+                                  ) {
+                                    return;
+                                  }
+                                  heroDeleteMutation.mutate(slide.id);
+                                }}
+                                disabled={heroDeleteMutation.isPending}
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-4">
+                          {slide.kicker && (
+                            <p className="mb-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                              {slide.kicker}
+                            </p>
+                          )}
+                          {slide.subheadline && (
+                            <p className="line-clamp-2 text-xs text-muted-foreground">
+                              {slide.subheadline}
+                            </p>
+                          )}
+                          <div className="mt-2 flex items-center justify-between">
+                            <span
+                              className={
+                                slide.is_active ? statusColors.Active : statusColors.Draft
+                              }
+                            >
+                              {slide.is_active ? "Active" : "Draft"}
+                            </span>
+                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <Clock size={10} />{" "}
+                              {new Date(slide.updated_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               </div>
-            </motion.div>
-          )})}
+            );
+          })}
         </div>
-      </motion.div>
+      </ContentSection>
 
       {/* Front-facing popup control */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-        className="editorial-panel mt-8"
+      <ContentSection
+        id="front-popup"
+        title="Front-facing popup"
+        description="Controls the marketing popup shown on the storefront (e.g. welcome offer, launch announcement). Managed by the Office app."
+        delay={0.5}
+        className="mt-8"
       >
-        <div className="section-header">
-          <div>
-            <h2 className="section-title">Front-facing popup</h2>
-            <p className="section-copy">
-              Controls the marketing popup shown on the storefront (e.g. welcome
-              offer, launch announcement). Managed by the Office app.
-            </p>
-          </div>
-        </div>
         <div className="grid grid-cols-1 md:grid-cols-[2fr_1.4fr] gap-6">
           {/* Preview */}
           <div className="rounded-[1.5rem] border border-border/60 bg-background/40 p-4">
@@ -1020,25 +1650,649 @@ const Content = () => {
             </div>
           </form>
         </div>
-      </motion.div>
-      {/* Home page bestsellers */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.25 }}
-        className="editorial-panel mt-8 mb-10"
+      </ContentSection>
+
+      {/* Personalisation page settings */}
+      <ContentSection
+        id="personalisation"
+        title="Personalisation page"
+        description={
+          <>
+            Controls the storefront <code className="text-xs">/personalisation</code> flow:
+            per-category bottle previews (Men / Women / Unisex / Diffuser), fee, label position, and fonts.
+          </>
+        }
+        delay={0.55}
+        className="mt-8"
       >
-        <div className="section-header">
-          <div className="flex items-center gap-3">
-            <Image size={20} className="text-primary" />
-            <div>
-              <h2 className="section-title">Home bestsellers</h2>
-              <p className="section-copy">
-                Control which products are featured as bestsellers on the
-                storefront home page.
-              </p>
-            </div>
+        {personalisationSetupError && (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+            {personalisationTablesMissing ? (
+              <>
+                <p className="font-medium text-amber-200">Personalisation tables not set up</p>
+                <p className="mt-1 text-muted-foreground">{PERSONALISATION_SETUP_HINT}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Supabase → SQL Editor → paste the full contents of{" "}
+                  <code className="text-[11px]">docs/SUPABASE_PERSONALISATION_REPAIR.sql</code> → Run
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  You should see <code className="text-[10px]">settings_count = 1</code> and{" "}
+                  <code className="text-[10px]">fonts_count = 3</code> when it succeeds.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium text-amber-200">Personalisation database error</p>
+                <p className="mt-1 text-muted-foreground">{personalisationSetupError}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Re-run{" "}
+                  <code className="text-[11px]">docs/SUPABASE_PERSONALISATION_REPAIR.sql</code> in Supabase,
+                  then refresh.
+                </p>
+              </>
+            )}
           </div>
+        )}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-[1.4fr_2fr]">
+          <div className="rounded-[1.5rem] border border-border/60 bg-background/40 p-4">
+            <div className="mb-3 flex flex-wrap gap-2">
+              {PERSONALISATION_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.code}
+                  type="button"
+                  className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.14em] transition-colors ${
+                    previewCategory === cat.code
+                      ? "border-primary bg-primary/15 text-primary"
+                      : "border-border/60 text-muted-foreground hover:border-primary/40"
+                  }`}
+                  onClick={() => setPreviewCategory(cat.code)}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+            <p className="luxury-note mb-2">Label preview — {PERSONALISATION_CATEGORIES.find((c) => c.code === previewCategory)?.label}</p>
+            <div className="relative mx-auto aspect-[3/4] max-w-xs overflow-hidden rounded-2xl border border-border/60 bg-muted">
+              {personalisationPreviewPath ? (
+                <OptimizedImage
+                  bucket="hero-assets"
+                  path={personalisationPreviewPath}
+                  preset="personalisation"
+                  loading="lazy"
+                  decoding="async"
+                  alt="Blank bottle preview"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary/10 via-background/40 to-accent/15 p-6 text-center">
+                  <Image className="h-8 w-8 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">
+                    Upload a blank bottle for {PERSONALISATION_CATEGORIES.find((c) => c.code === previewCategory)?.label} below.
+                  </p>
+                </div>
+              )}
+              <div
+                className="pointer-events-none absolute text-center text-sm font-medium tracking-[0.06em] text-foreground/90"
+                style={{
+                  top: `${activeLabelPosition.top}%`,
+                  left: `${activeLabelPosition.left}%`,
+                  width: `${activeLabelPosition.width}%`,
+                  transform: "translate(-50%, -50%)",
+                  fontFamily: personalisationForm.previewFontFamily,
+                }}
+              >
+                {personalisationForm.previewName || personalisationForm.placeholderText}
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Fee: R{Number(personalisationForm.fee || 0).toFixed(2)} added at checkout.
+            </p>
+          </div>
+
+          <form
+            className="space-y-4 text-sm"
+            onSubmit={(e) => {
+              e.preventDefault();
+              personalisationSaveMutation.mutate();
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Run <code className="text-[10px]">docs/SUPABASE_PERSONALISATION_REPAIR.sql</code> once if tables are missing.
+              </p>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-border bg-background accent-current"
+                  checked={personalisationForm.isActive}
+                  onChange={(e) =>
+                    setPersonalisationForm((f) => ({ ...f, isActive: e.target.checked }))
+                  }
+                />
+                <span>Active on storefront</span>
+              </label>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Personalisation fee (ZAR)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={personalisationForm.fee}
+                  onChange={(e) =>
+                    setPersonalisationForm((f) => ({ ...f, fee: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Max name length</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={personalisationForm.maxNameLength}
+                  onChange={(e) =>
+                    setPersonalisationForm((f) => ({ ...f, maxNameLength: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Placeholder text</Label>
+                <Input
+                  value={personalisationForm.placeholderText}
+                  onChange={(e) =>
+                    setPersonalisationForm((f) => ({
+                      ...f,
+                      placeholderText: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Preview name</Label>
+                <Input
+                  value={personalisationForm.previewName}
+                  onChange={(e) =>
+                    setPersonalisationForm((f) => ({ ...f, previewName: e.target.value }))
+                  }
+                  placeholder="Type to preview on bottle"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <Label>Blank bottle images & label position (per category)</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Uploads go to <code className="text-[10px]">hero-assets/personalisation/&#123;category&#125;/</code> and
+                save paths to Supabase automatically. Until all four are set, the main app
+                falls back to local SVG bottle mockups.
+              </p>
+              {PERSONALISATION_CATEGORIES.map((cat) => (
+                <div
+                  key={cat.code}
+                  className="rounded-xl border border-border/50 bg-muted/10 p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-foreground">
+                      {cat.label}
+                      {personalisationForm.categoryPreviewImages[cat.code]?.trim() ? (
+                        <span className="ml-2 text-[10px] font-normal text-emerald-400">
+                          Saved
+                        </span>
+                      ) : (
+                        <span className="ml-2 text-[10px] font-normal text-amber-400/90">
+                          Missing — SVG fallback on storefront
+                        </span>
+                      )}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-[11px]"
+                      onClick={() => setPreviewCategory(cat.code)}
+                    >
+                      Preview
+                    </Button>
+                  </div>
+                  <Input
+                    value={personalisationForm.categoryPreviewImages[cat.code]}
+                    onChange={(e) =>
+                      setPersonalisationForm((f) => ({
+                        ...f,
+                        categoryPreviewImages: {
+                          ...f.categoryPreviewImages,
+                          [cat.code]: e.target.value,
+                        },
+                      }))
+                    }
+                    placeholder={`personalisation/${cat.code}/blank-bottle.jpg`}
+                  />
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Label top %</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={personalisationForm.categoryLabelPositions[cat.code].top}
+                        onChange={(e) =>
+                          setPersonalisationForm((f) => ({
+                            ...f,
+                            categoryLabelPositions: {
+                              ...f.categoryLabelPositions,
+                              [cat.code]: {
+                                ...f.categoryLabelPositions[cat.code],
+                                top: e.target.value,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Label left %</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={personalisationForm.categoryLabelPositions[cat.code].left}
+                        onChange={(e) =>
+                          setPersonalisationForm((f) => ({
+                            ...f,
+                            categoryLabelPositions: {
+                              ...f.categoryLabelPositions,
+                              [cat.code]: {
+                                ...f.categoryLabelPositions[cat.code],
+                                left: e.target.value,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Label width %</Label>
+                      <Input
+                        type="number"
+                        min={10}
+                        max={100}
+                        value={personalisationForm.categoryLabelPositions[cat.code].width}
+                        onChange={(e) =>
+                          setPersonalisationForm((f) => ({
+                            ...f,
+                            categoryLabelPositions: {
+                              ...f.categoryLabelPositions,
+                              [cat.code]: {
+                                ...f.categoryLabelPositions[cat.code],
+                                width: e.target.value,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={personalisationImageUploadMutation.isPending}
+                    onClick={() => {
+                      setPendingUploadCategory(cat.code);
+                      personalisationImageInputRef.current?.click();
+                    }}
+                  >
+                    {personalisationImageUploadMutation.isPending &&
+                    pendingUploadCategory === cat.code
+                      ? "Uploading…"
+                      : `Upload ${cat.label} bottle`}
+                  </Button>
+                </div>
+              ))}
+              <input
+                ref={personalisationImageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file || !pendingUploadCategory) return;
+                  personalisationImageUploadMutation.mutate({
+                    file,
+                    category: pendingUploadCategory,
+                  });
+                  e.currentTarget.value = "";
+                }}
+              />
+            </div>
+
+            <div className="space-y-3">
+              <Label>Font options</Label>
+              {personalisationFonts.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No fonts found. Run the personalisation SQL seed script.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {personalisationFonts.map((font) => {
+                    const edit = fontEdits[font.code] ?? {
+                      label: font.label,
+                      fontFamily: font.font_family,
+                      isActive: font.is_active,
+                    };
+                    return (
+                      <div
+                        key={font.id}
+                        className="grid gap-2 rounded-xl border border-border/50 bg-muted/10 p-3 md:grid-cols-[1fr_1.4fr_auto]"
+                      >
+                        <Input
+                          value={edit.label}
+                          onChange={(e) =>
+                            setFontEdits((prev) => ({
+                              ...prev,
+                              [font.code]: { ...edit, label: e.target.value },
+                            }))
+                          }
+                          placeholder="Display label"
+                        />
+                        <Input
+                          value={edit.fontFamily}
+                          onChange={(e) =>
+                            setFontEdits((prev) => ({
+                              ...prev,
+                              [font.code]: { ...edit, fontFamily: e.target.value },
+                            }))
+                          }
+                          placeholder='CSS font-family, e.g. "Georgia", serif'
+                        />
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-1.5 text-[11px] whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={edit.isActive}
+                              onChange={(e) =>
+                                setFontEdits((prev) => ({
+                                  ...prev,
+                                  [font.code]: { ...edit, isActive: e.target.checked },
+                                }))
+                              }
+                            />
+                            Active
+                          </label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() =>
+                              setPersonalisationForm((f) => ({
+                                ...f,
+                                previewFontFamily: edit.fontFamily,
+                              }))
+                            }
+                          >
+                            Preview
+                          </Button>
+                        </div>
+                        <p className="md:col-span-3 text-[10px] text-muted-foreground">
+                          Code: <code>{font.code}</code>
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <Button
+              type="submit"
+              size="sm"
+              disabled={personalisationSaveMutation.isPending}
+            >
+              {personalisationSaveMutation.isPending
+                ? "Saving…"
+                : "Save personalisation settings"}
+            </Button>
+          </form>
+        </div>
+      </ContentSection>
+
+      {/* Bundle specials */}
+      <ContentSection
+        id="bundle-specials"
+        title="Bundle specials"
+        description={
+          <>
+            Pick-and-mix deals on the storefront at{" "}
+            <code className="text-xs">/specials/&#123;code&#125;</code>. Shoppers
+            choose fragrances by line (tabs for His &amp; Hers).
+          </>
+        }
+        icon={<Gift size={20} className="text-primary shrink-0" />}
+        delay={0.24}
+        className="mt-8 mb-10"
+      >
+        {bundleSetupError && (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+            <p className="font-medium text-amber-200">Bundle tables not set up</p>
+            <p className="mt-1 text-muted-foreground">{bundleSetupError}</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Run <code className="text-[11px]">docs/SUPABASE_BUNDLE_SPECIALS.sql</code> in
+              Supabase SQL Editor.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {bundleSpecials.map((bundle) => {
+            const slots = orderedBundleSlots(bundle);
+            const slotSummary = slots
+              .map((s) => `${s.pick_count}× ${s.tab_label}`)
+              .join(" + ");
+            return (
+              <div
+                key={bundle.id}
+                className="flex flex-col justify-between rounded-[1.5rem] border border-border/60 bg-background/40 p-4"
+              >
+                <div className="space-y-2">
+                  <p className="luxury-note">{bundle.code}</p>
+                  <p className="text-sm font-medium text-foreground">{bundle.name}</p>
+                  {bundle.headline && (
+                    <p className="text-xs text-muted-foreground">{bundle.headline}</p>
+                  )}
+                  <p className="text-sm font-semibold text-primary">
+                    R{Number(bundle.bundle_price).toFixed(2)}
+                    {bundle.compare_at_price != null && (
+                      <span className="ml-2 text-xs font-normal text-muted-foreground line-through">
+                        R{Number(bundle.compare_at_price).toFixed(2)}
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {slotSummary || "No slots"} · {totalPickCount(bundle)} picks total
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Storefront: {bundleSpecialPath(bundle.code)}
+                  </p>
+                </div>
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <span
+                    className={
+                      bundle.is_active ? statusColors.Active : statusColors.Draft
+                    }
+                  >
+                    {bundle.is_active ? "Active" : "Hidden"}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => openBundleEditor(bundle)}
+                  >
+                    Edit copy &amp; pricing
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+          {!bundleSetupError && bundleSpecials.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              No bundles yet. Run the SQL seed script to create the four launch specials.
+            </p>
+          )}
+        </div>
+      </ContentSection>
+
+      {/* Client Notes testimonials */}
+      <ContentSection
+        id="client-notes"
+        title="Client Notes"
+        description={
+          <>
+            Testimonial cards on the storefront home page. Section kicker and
+            headline are stored as a hero slide with code{" "}
+            <code className="text-xs">client-notes</code>.
+          </>
+        }
+        icon={<MessageSquare size={20} className="text-primary shrink-0" />}
+        delay={0.245}
+        className="mt-8 mb-10"
+        actions={
+          <Button
+            size="sm"
+            disabled={!!clientNotesSetupError}
+            onClick={() => openClientNoteEditor()}
+          >
+            + Add testimonial
+          </Button>
+        }
+      >
+        {clientNotesSetupError && (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+            <p className="font-medium text-amber-200">Client Notes table not set up</p>
+            <p className="mt-1 text-muted-foreground">{clientNotesSetupError}</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Run <code className="text-[11px]">docs/SUPABASE_HOME_CLIENT_NOTES.sql</code> in
+              Supabase SQL Editor.
+            </p>
+          </div>
+        )}
+
+        <form
+          className="mb-6 grid grid-cols-1 gap-4 rounded-[1.5rem] border border-border/60 bg-background/40 p-4 md:grid-cols-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            clientNotesHeaderMutation.mutate();
+          }}
+        >
+          <div className="space-y-2">
+            <Label className="text-xs">Section kicker</Label>
+            <Input
+              value={clientNotesHeaderForm.kicker}
+              onChange={(e) =>
+                setClientNotesHeaderForm((f) => ({ ...f, kicker: e.target.value }))
+              }
+              placeholder="Client Notes"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Section headline</Label>
+            <Input
+              value={clientNotesHeaderForm.headline}
+              onChange={(e) =>
+                setClientNotesHeaderForm((f) => ({ ...f, headline: e.target.value }))
+              }
+              placeholder="What people remember after the first wear."
+              required
+            />
+          </div>
+          <div className="md:col-span-2 flex justify-end">
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              disabled={clientNotesHeaderMutation.isPending}
+            >
+              {clientNotesHeaderMutation.isPending ? "Saving…" : "Save section header"}
+            </Button>
+          </div>
+        </form>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {homeClientNotes.map((note) => (
+            <div
+              key={note.id}
+              className="flex flex-col justify-between rounded-[1.5rem] border border-border/60 bg-background/40 p-4"
+            >
+              <div className="space-y-2">
+                <p className="luxury-note">{note.location}</p>
+                <p className="text-sm font-medium text-foreground">{note.client_name}</p>
+                <p className="text-xs text-muted-foreground line-clamp-4">
+                  &ldquo;{note.quote}&rdquo;
+                </p>
+                <p className="text-[11px] text-primary">
+                  ★ {Number(note.rating).toFixed(1)}
+                </p>
+              </div>
+              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <span
+                  className={
+                    note.is_active ? statusColors.Active : statusColors.Draft
+                  }
+                >
+                  {note.is_active ? "Active" : "Hidden"}
+                </span>
+                <span>Order: {note.sort_order}</span>
+                <div className="flex items-center gap-2">
+                  {!note.is_active && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px]"
+                      disabled={clientNoteDeleteMutation.isPending}
+                      onClick={() => {
+                        if (!confirm("Delete this testimonial? This cannot be undone.")) return;
+                        clientNoteDeleteMutation.mutate(note.id);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => openClientNoteEditor(note)}
+                  >
+                    Edit
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!clientNotesSetupError && homeClientNotes.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              No testimonials yet. Run the SQL seed script or add one above.
+            </p>
+          )}
+        </div>
+      </ContentSection>
+
+      {/* Home page bestsellers */}
+      <ContentSection
+        id="home-bestsellers"
+        title="Home bestsellers"
+        description="Control which products are featured as bestsellers on the storefront home page."
+        icon={<Image size={20} className="text-primary shrink-0" />}
+        delay={0.25}
+        className="mt-8 mb-10"
+        actions={
           <Button
             size="sm"
             onClick={() => {
@@ -1060,7 +2314,8 @@ const Content = () => {
           >
             + Add bestseller
           </Button>
-        </div>
+        }
+      >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {homeBestsellers.map((b) => {
             const product = products.find((p) => p.id === b.product_id);
@@ -1134,27 +2389,17 @@ const Content = () => {
             </p>
           )}
         </div>
-      </motion.div>
+      </ContentSection>
 
       {/* Product content studio */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.28 }}
-        className="editorial-panel mt-10"
+      <ContentSection
+        id="fragrance-products"
+        title="Fragrance products"
+        description="Edit the copy, imagery, notes, and promotion flags for individual storefront products. Cards below mirror the feel of the live product page."
+        icon={<Sparkles size={20} className="text-primary shrink-0" />}
+        delay={0.28}
+        className="mt-10"
       >
-        <div className="section-header">
-          <div className="flex items-center gap-3">
-            <Sparkles size={20} className="text-primary" />
-            <div>
-              <h2 className="section-title">Fragrance products</h2>
-              <p className="section-copy">
-                Edit the copy, imagery, notes, and promotion flags for individual
-                storefront products. Cards below mirror the feel of the live product page.
-              </p>
-            </div>
-          </div>
-        </div>
         {[
           { id: "mens", label: "Mens line", key: "mens" as const },
           { id: "womens", label: "Womens line", key: "womens" as const },
@@ -1193,10 +2438,7 @@ const Content = () => {
                       : p.price != null
                         ? p.price
                         : null;
-                  const imageUrl =
-                    p.primary_image_path && supabaseUrl
-                      ? `${supabaseUrl}/storage/v1/object/public/product_assets/${p.primary_image_path}`
-                      : undefined;
+                  const imageUrl = productStorageImageUrl(p.primary_image_path, "card");
                   const status = p.is_active ? "Active" : "Draft";
 
                   return (
@@ -1211,9 +2453,7 @@ const Content = () => {
                       onClick={() => {
                         setEditingProduct(p);
                         setProductPreviewImageUrl(
-                          p.primary_image_path && (import.meta as any).env?.VITE_SUPABASE_URL
-                            ? `${(import.meta as any).env.VITE_SUPABASE_URL}/storage/v1/object/public/product_assets/${p.primary_image_path}`
-                            : null,
+                          productStorageImageUrl(p.primary_image_path, "pdp"),
                         );
                         setProductTab("basic");
                         setProductForm({
@@ -1368,23 +2608,16 @@ const Content = () => {
             </div>
           );
         })}
-      </motion.div>
+      </ContentSection>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="editorial-panel mt-12"
+      <ContentSection
+        id="editorial-cards"
+        title="Editorial cards"
+        description="Supporting visual stories for launches, editions, and seasonal brand beats."
+        icon={<Image size={20} className="text-primary shrink-0" />}
+        delay={0.3}
+        className="mt-12"
       >
-        <div className="section-header">
-          <div className="flex items-center gap-3">
-            <Image size={20} className="text-primary" />
-            <div>
-              <h2 className="section-title">Editorial cards</h2>
-              <p className="section-copy">Supporting visual stories for launches, editions, and seasonal brand beats.</p>
-            </div>
-          </div>
-        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {pictureCards.map((card, i) => (
             <motion.div
@@ -1409,24 +2642,16 @@ const Content = () => {
             </motion.div>
           ))}
         </div>
-      </motion.div>
+      </ContentSection>
 
       {/* Collections controlling storefront \"Shop the House\" tiles */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.45 }}
-        className="editorial-panel mt-8"
+      <ContentSection
+        id="storefront-collections"
+        title="Storefront collections"
+        description='These collections feed the "Shop the House" cards in the customer storefront. Update copy and image paths here and the shop will reflect it automatically.'
+        delay={0.45}
+        className="mt-8"
       >
-        <div className="section-header">
-          <div>
-            <h2 className="section-title">Storefront collections</h2>
-            <p className="section-copy">
-              These collections feed the \"Shop the House\" cards in the customer storefront. Update copy and image paths here and the shop will
-              reflect it automatically.
-            </p>
-          </div>
-        </div>
           {collectionsLoading ? (
             <p className="text-sm text-muted-foreground">Loading collections…</p>
           ) : (
@@ -1449,7 +2674,7 @@ const Content = () => {
                       {previewImage ? (
                         <>
                           <motion.img
-                            src={resolveCollectionImageUrl(previewImage)}
+                            src={collectionStorageImageUrl(previewImage)}
                             alt={c?.name ?? code.toUpperCase()}
                             className="h-full w-full object-cover"
                             initial={{ scale: 1 }}
@@ -1577,7 +2802,7 @@ const Content = () => {
             })}
           </div>
         )}
-      </motion.div>
+      </ContentSection>
 
       <Dialog open={!!editingCollection} onOpenChange={(open) => !open && setEditingCollection(null)}>
         {editingCollection && (
@@ -1687,7 +2912,7 @@ const Content = () => {
                     </p>
                     <div className="relative h-36 w-full bg-muted/50 max-h-[180px]">
                       <img
-                        src={resolveHeroImageUrl(form.hero_image_url)}
+                        src={heroStorageImageUrl(form.hero_image_url)}
                         alt="Collection card"
                         className="h-full w-full object-cover object-center"
                         onError={(e) => {
@@ -1881,6 +3106,130 @@ const Content = () => {
         )}
       </Dialog>
 
+      {/* Client Notes testimonial editor */}
+      <Dialog open={isClientNoteDialogOpen} onOpenChange={setIsClientNoteDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {editingClientNote ? "Edit testimonial" : "Add testimonial"}
+            </DialogTitle>
+            <DialogDescription>
+              Shown on the storefront home page Client Notes section.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="mt-2 space-y-4 text-sm"
+            onSubmit={(e) => {
+              e.preventDefault();
+              clientNoteMutation.mutate();
+            }}
+          >
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Client name</Label>
+                <Input
+                  value={clientNoteForm.clientName}
+                  onChange={(e) =>
+                    setClientNoteForm((f) => ({ ...f, clientName: e.target.value }))
+                  }
+                  placeholder="e.g. Nolwazi M."
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Location</Label>
+                <Input
+                  value={clientNoteForm.location}
+                  onChange={(e) =>
+                    setClientNoteForm((f) => ({ ...f, location: e.target.value }))
+                  }
+                  placeholder="e.g. Johannesburg"
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Quote</Label>
+              <Textarea
+                value={clientNoteForm.quote}
+                onChange={(e) =>
+                  setClientNoteForm((f) => ({ ...f, quote: e.target.value }))
+                }
+                placeholder="What they said about the fragrance…"
+                rows={4}
+                required
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Rating (0–5)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={5}
+                  step={0.1}
+                  value={clientNoteForm.rating}
+                  onChange={(e) =>
+                    setClientNoteForm((f) => ({ ...f, rating: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Sort order</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={clientNoteForm.sortOrder}
+                  onChange={(e) =>
+                    setClientNoteForm((f) => ({ ...f, sortOrder: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="client-note-active"
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-border bg-background accent-current"
+                checked={clientNoteForm.isActive}
+                onChange={(e) =>
+                  setClientNoteForm((f) => ({ ...f, isActive: e.target.checked }))
+                }
+              />
+              <Label htmlFor="client-note-active" className="text-xs">
+                Active on home page
+              </Label>
+            </div>
+            <DialogFooter className="mt-4">
+              {editingClientNote && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="mr-auto text-destructive"
+                  disabled={clientNoteDeleteMutation.isPending}
+                  onClick={() => {
+                    if (!confirm("Delete this testimonial? This cannot be undone.")) return;
+                    clientNoteDeleteMutation.mutate(editingClientNote.id);
+                  }}
+                >
+                  Delete
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsClientNoteDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={clientNoteMutation.isPending}>
+                {clientNoteMutation.isPending ? "Saving…" : "Save testimonial"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Product editor dialog */}
       <Dialog
         open={!!editingProduct}
@@ -1917,7 +3266,7 @@ const Content = () => {
                           <motion.img
                             src={
                               productPreviewImageUrl ||
-                              `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/product_assets/${productForm.primaryImagePath}`
+                              productStorageImageUrl(productForm.primaryImagePath, "pdp")
                             }
                             alt={productForm.name}
                             className="h-full w-full object-cover"
@@ -2430,8 +3779,10 @@ const Content = () => {
                                 className="relative h-16 w-20 overflow-hidden rounded-md border border-border/60 bg-muted"
                               >
                                 <img
-                                  src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/product_assets/${img.path}`}
+                                  src={productStorageImageUrl(img.path, "thumb")}
                                   alt=""
+                                  loading="lazy"
+                                  decoding="async"
                                   className="h-full w-full object-cover"
                                 />
                                 <button
@@ -2710,7 +4061,7 @@ const Content = () => {
                       <motion.div
                         className="absolute inset-0"
                         style={{
-                          backgroundImage: `url(${resolveHeroImageUrl(
+                          backgroundImage: `url(${heroStorageImageUrl(
                             heroForm.backgroundImageUrl ||
                               (heroForm.galleryImageUrls?.[0] ??
                                 editingHero?.background_image_url ??
@@ -2960,7 +4311,7 @@ const Content = () => {
                             className="relative h-14 w-20 flex-shrink-0 overflow-hidden rounded-md border border-border/60 bg-muted"
                           >
                             <img
-                              src={resolveHeroImageUrl(img)}
+                              src={heroStorageImageUrl(img)}
                               alt=""
                               className="h-full w-full object-cover"
                             />
@@ -3118,6 +4469,258 @@ const Content = () => {
             </div>
           </DialogContent>
         )}
+      </Dialog>
+
+      <Dialog open={isBundleDialogOpen} onOpenChange={setIsBundleDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit bundle special</DialogTitle>
+            <DialogDescription>
+              Pricing and copy for{" "}
+              <code className="text-xs">{bundleForm.code || "bundle"}</code>. Products
+              come from active inventory by collection line.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-sm">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Bundle price (ZAR)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={bundleForm.bundlePrice}
+                  onChange={(e) =>
+                    setBundleForm((f) => ({ ...f, bundlePrice: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Compare-at price (optional)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={bundleForm.compareAtPrice}
+                  onChange={(e) =>
+                    setBundleForm((f) => ({ ...f, compareAtPrice: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Display name</Label>
+              <Input
+                value={bundleForm.name}
+                onChange={(e) => setBundleForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Headline</Label>
+              <Input
+                value={bundleForm.headline}
+                onChange={(e) =>
+                  setBundleForm((f) => ({ ...f, headline: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Subheadline</Label>
+              <Input
+                value={bundleForm.subheadline}
+                onChange={(e) =>
+                  setBundleForm((f) => ({ ...f, subheadline: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input
+                value={bundleForm.description}
+                onChange={(e) =>
+                  setBundleForm((f) => ({ ...f, description: e.target.value }))
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Hero image path</Label>
+              <Input
+                value={bundleForm.heroImageUrl}
+                onChange={(e) =>
+                  setBundleForm((f) => ({ ...f, heroImageUrl: e.target.value }))
+                }
+                placeholder="bundle-specials/mens-trio/hero.jpg"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={bundleImageUploadMutation.isPending}
+                onClick={() => bundleImageInputRef.current?.click()}
+              >
+                {bundleImageUploadMutation.isPending ? "Uploading…" : "Upload hero image"}
+              </Button>
+              <input
+                ref={bundleImageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) bundleImageUploadMutation.mutate(file);
+                  e.currentTarget.value = "";
+                }}
+              />
+              {bundleForm.heroImageUrl && (
+                <img
+                  src={heroStorageImageUrl(bundleForm.heroImageUrl)}
+                  alt="Bundle hero"
+                  className="mt-2 max-h-32 rounded-lg border border-border/60 object-cover"
+                />
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <Label>Selection slots (storefront tabs)</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Each slot filters products by <code>collection_code</code>. Multiple
+                slots = tabs (e.g. His &amp; Hers).
+              </p>
+              {bundleSlotForms.map((slot, index) => (
+                <div
+                  key={`${slot.slot_code}-${index}`}
+                  className="grid gap-2 rounded-xl border border-border/50 bg-muted/10 p-3 md:grid-cols-5"
+                >
+                  <Input
+                    placeholder="slot_code"
+                    value={slot.slot_code}
+                    onChange={(e) =>
+                      setBundleSlotForms((rows) =>
+                        rows.map((r, i) =>
+                          i === index ? { ...r, slot_code: e.target.value } : r,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    placeholder="Tab label"
+                    value={slot.tab_label}
+                    onChange={(e) =>
+                      setBundleSlotForms((rows) =>
+                        rows.map((r, i) =>
+                          i === index ? { ...r, tab_label: e.target.value } : r,
+                        ),
+                      )
+                    }
+                  />
+                  <select
+                    className="rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+                    value={slot.collection_code}
+                    onChange={(e) =>
+                      setBundleSlotForms((rows) =>
+                        rows.map((r, i) =>
+                          i === index ? { ...r, collection_code: e.target.value } : r,
+                        ),
+                      )
+                    }
+                  >
+                    {BUNDLE_COLLECTION_OPTIONS.map((opt) => (
+                      <option key={opt.code} value={opt.code}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="Pick count"
+                    value={slot.pick_count}
+                    onChange={(e) =>
+                      setBundleSlotForms((rows) =>
+                        rows.map((r, i) =>
+                          i === index ? { ...r, pick_count: e.target.value } : r,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    type="number"
+                    placeholder="Order"
+                    value={slot.sort_order}
+                    onChange={(e) =>
+                      setBundleSlotForms((rows) =>
+                        rows.map((r, i) =>
+                          i === index ? { ...r, sort_order: e.target.value } : r,
+                        ),
+                      )
+                    }
+                  />
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setBundleSlotForms((rows) => [
+                    ...rows,
+                    {
+                      slot_code: `slot-${rows.length}`,
+                      tab_label: "Line",
+                      collection_code: "mens",
+                      pick_count: "1",
+                      sort_order: String(rows.length),
+                    },
+                  ])
+                }
+              >
+                + Add slot
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={bundleForm.isActive}
+                  onChange={(e) =>
+                    setBundleForm((f) => ({ ...f, isActive: e.target.checked }))
+                  }
+                />
+                Active on storefront
+              </label>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs">Sort order</Label>
+                <Input
+                  className="h-8 w-20"
+                  type="number"
+                  value={bundleForm.sortOrder}
+                  onChange={(e) =>
+                    setBundleForm((f) => ({ ...f, sortOrder: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsBundleDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={bundleSaveMutation.isPending}
+              onClick={() => bundleSaveMutation.mutate()}
+            >
+              {bundleSaveMutation.isPending ? "Saving…" : "Save bundle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     </DashboardLayout>
   );

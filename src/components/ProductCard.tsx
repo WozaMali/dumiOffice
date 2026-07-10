@@ -1,17 +1,9 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
+import OptimizedImage from "@/components/OptimizedImage";
 import type { Product } from "@/types/database";
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-
-function resolveProductImageUrl(path?: string | null): string {
-  if (!path) return "";
-  if (path.startsWith("http")) return path;
-  if (path.startsWith("/")) return path;
-  if (!supabaseUrl) return path;
-  return `${supabaseUrl}/storage/v1/object/public/product_assets/${path}`;
-}
+import { productStorageImageSrcSet } from "@/lib/utils/storage-image";
 
 interface ProductCardProps {
   product: Product;
@@ -29,7 +21,7 @@ const ProductCard = ({ product, index = 0 }: ProductCardProps) => {
     0;
   const size = product.default_size ?? "50ml";
   const code = product.code ?? product.sku ?? product.id;
-  const imageUrl = resolveProductImageUrl(product.primary_image_path);
+  const srcSet = productStorageImageSrcSet(product.primary_image_path, "card");
 
   return (
     <motion.div
@@ -42,12 +34,17 @@ const ProductCard = ({ product, index = 0 }: ProductCardProps) => {
         className="group block overflow-hidden rounded-[1.5rem] border border-border/60 bg-background/40 transition-all duration-300 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5"
       >
         <div className="relative aspect-[3/4] overflow-hidden storefront-media-bg">
-          {imageUrl ? (
-            <motion.img
-              src={imageUrl}
+          {product.primary_image_path ? (
+            <OptimizedImage
+              bucket="product_assets"
+              path={product.primary_image_path}
+              preset="card"
+              srcSet={srcSet}
+              sizes="(max-width: 640px) 50vw, 25vw"
+              loading="lazy"
+              decoding="async"
               alt={displayName}
               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-              initial={{ scale: 1 }}
             />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-primary/10 via-background/40 to-accent/15">

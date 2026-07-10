@@ -5,20 +5,11 @@ import { ArrowLeft } from "lucide-react";
 import { productsApi } from "@/lib/api/products";
 import { collectionsApi } from "@/lib/api/collections";
 import FrontPopupModal from "@/components/FrontPopupModal";
+import OptimizedImage from "@/components/OptimizedImage";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import StorefrontAuthDialog from "@/components/StorefrontAuthDialog";
 import { useState } from "react";
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-
-function resolveProductImageUrl(path?: string | null): string {
-  if (!path) return "";
-  if (path.startsWith("http")) return path;
-  if (path.startsWith("/")) return path;
-  if (!supabaseUrl) return path;
-  return `${supabaseUrl}/storage/v1/object/public/product_assets/${path}`;
-}
 
 const ProductDetail = () => {
   const { code } = useParams<{ code: string }>();
@@ -99,7 +90,6 @@ const ProductDetail = () => {
   const size = hasSizeOptions
     ? selectedSize!.label
     : product.default_size ?? "50ml";
-  const imageUrl = resolveProductImageUrl(product.primary_image_path);
 
   const handleCheckoutIntent = async () => {
     const { data } = await supabase.auth.getSession();
@@ -147,14 +137,16 @@ const ProductDetail = () => {
           className="grid grid-cols-1 gap-10 lg:grid-cols-2"
         >
           <div className="relative aspect-[3/4] overflow-hidden rounded-[1.5rem] storefront-media-bg">
-            {imageUrl ? (
-              <motion.img
-                src={imageUrl}
+            {product.primary_image_path ? (
+              <OptimizedImage
+                bucket="product_assets"
+                path={product.primary_image_path}
+                preset="pdp"
+                fetchPriority="high"
+                loading="eager"
+                decoding="async"
                 alt={displayName}
                 className="h-full w-full object-cover"
-                initial={{ scale: 1.02 }}
-                animate={{ scale: 1 }}
-                transition={{ duration: 0.5 }}
               />
             ) : (
               <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-primary/10 via-background/40 to-accent/15">

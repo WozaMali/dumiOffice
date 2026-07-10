@@ -5,6 +5,8 @@ import type {
   AccountingTransaction,
   AccountingTransactionType,
   AccountingAttachment,
+  Order,
+  PaymentStatus,
 } from "@/types/database";
 
 export const accountingApi = {
@@ -87,6 +89,38 @@ export const accountingApi = {
       .delete()
       .eq("id", id);
     if (error) throw error;
+  },
+
+  async hasIncomeForOrder(orderId: string): Promise<boolean> {
+    const { data, error } = await supabase
+      .from("accounting_transactions")
+      .select("id")
+      .eq("order_id", orderId)
+      .eq("type", "income")
+      .limit(1);
+
+    if (error) throw error;
+    return (data?.length ?? 0) > 0;
+  },
+
+  async ensureOrderIncomeTransaction(
+    order: Pick<Order, "id" | "date" | "grand_total" | "currency" | "reference" | "payment_status">,
+  ): Promise<AccountingTransaction | null> {
+    if (order.payment_status !== ("Paid" as PaymentStatus)) return null;
+
+    const exists = await this.hasIncomeForOrder(order.id);
+    if (exists) return null;
+
+    return this.createTransaction({
+      date: order.date,
+      type: "income",
+      amount: order.grand_total,
+      currency: order.currency,
+      order_id: order.id,
+      reference: order.reference,
+      description: `Order ${order.reference}`,
+      created_by: "Orders",
+    });
   },
 
   async createTransaction(input: {
