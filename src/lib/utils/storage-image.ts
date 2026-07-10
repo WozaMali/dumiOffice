@@ -7,7 +7,8 @@ export type ImagePreset =
   | "hero"
   | "homeCarousel"
   | "popup"
-  | "personalisation";
+  | "personalisation"
+  | "bundleCard";
 
 const PRESET_SIZES: Record<
   ImagePreset,
@@ -20,6 +21,7 @@ const PRESET_SIZES: Record<
   homeCarousel: { width: 1440, height: 614, quality: 80 },
   popup: { width: 800, quality: 75 },
   personalisation: { width: 600, quality: 80 },
+  bundleCard: { width: 1280, height: 800, quality: 80 },
 };
 
 function supabaseUrl(): string {
@@ -178,6 +180,22 @@ export function heroStorageImageUrl(
   preset: ImagePreset = "hero",
 ): string {
   return supabaseImageFromPreset("hero-assets", path, preset);
+}
+
+export function heroStorageImageFallbackUrl(
+  path: string | null | undefined,
+): string {
+  return supabaseStorageImageUrl("hero-assets", path, { transform: false });
+}
+
+/** Bundle marquee cards — 1280×800; falls back to direct object URL when transforms off. */
+export function bundleStorageImageUrl(path: string | null | undefined): string {
+  if (!path) return "";
+  if (path.startsWith("http")) return fixSupabasePublicUrl(path);
+  if (!imageTransformsEnabled()) {
+    return heroStorageImageFallbackUrl(path);
+  }
+  return supabaseImageFromPreset("hero-assets", path, "bundleCard");
 }
 
 export function personalisationStorageImageUrl(

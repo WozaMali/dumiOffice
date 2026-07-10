@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  bundleStorageImageUrl,
   collectionStorageImageUrl,
   encodeStoragePath,
   fixSupabasePublicUrl,
@@ -48,6 +49,16 @@ describe("storage-image", () => {
     const optimized = optimizeStoredPublicUrl(original, "popup");
     expect(optimized).toContain("/render/image/public/hero-assets/popup.jpg");
     expect(optimized).toContain("width=800");
+  });
+
+  it("builds bundle card transform URLs", () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_IMAGE_TRANSFORMS", "true");
+
+    const url = bundleStorageImageUrl("bundles/mens-trio.png");
+    expect(url).toContain("/render/image/public/hero-assets/bundles/mens-trio.png");
+    expect(url).toContain("width=1280");
+    expect(url).toContain("height=800");
   });
 
   it("encodes spaces in public storage URLs", () => {

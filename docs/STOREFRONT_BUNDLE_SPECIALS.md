@@ -12,7 +12,8 @@ Examples:
 
 ## Setup (once)
 
-Run **`docs/SUPABASE_BUNDLE_SPECIALS.sql`** in Supabase SQL Editor.
+1. Run **`docs/SUPABASE_BUNDLE_SPECIALS.sql`** in Supabase SQL Editor.
+2. Run **`docs/SUPABASE_HERO_ASSETS_STORAGE.sql`** so Office can upload bundle images to `hero-assets/bundles/`.
 
 You should see `bundle_count = 4`, `slot_count = 5`.
 

@@ -25,7 +25,7 @@ import { frontPopupApi } from "@/lib/api/frontPopup";
 import {
   bundleSpecialsApi,
   BUNDLE_SPECIALS_SETUP_HINT,
-  isMissingBundleTables,
+  isBundleSetupRequired,
   type BundleSpecialSlotInput,
 } from "@/lib/api/bundleSpecials";
 import {
@@ -43,6 +43,7 @@ import {
   parseCategoryLabelPosition,
   type PersonalisationCategoryCode,
 } from "@/lib/utils/personalisation";
+import { isAbortError } from "@/lib/utils";
 import {
   CONTENT_PRODUCT_SECTIONS,
   groupContentProducts,
@@ -58,6 +59,7 @@ import {
 } from "@/lib/utils/home-hero";
 import OptimizedImage from "@/components/OptimizedImage";
 import {
+  bundleStorageImageUrl,
   collectionStorageImageUrl,
   heroStorageImageUrl,
   productStorageImageUrl,
@@ -273,12 +275,18 @@ const Content = () => {
     retry: false,
   });
 
-  const bundleSetupError =
-    bundleSpecialsIsError && isMissingBundleTables(bundleSpecialsError)
-      ? BUNDLE_SPECIALS_SETUP_HINT
-      : bundleSpecialsIsError
-        ? String((bundleSpecialsError as Error)?.message || "")
-        : null;
+  const bundleQueryFailed =
+    bundleSpecialsIsError &&
+    bundleSpecialsError != null &&
+    !isAbortError(bundleSpecialsError);
+
+  const bundleTablesMissing =
+    bundleQueryFailed && isBundleSetupRequired(bundleSpecialsError);
+
+  const bundleLoadError =
+    bundleQueryFailed && !isBundleSetupRequired(bundleSpecialsError)
+      ? String((bundleSpecialsError as Error)?.message || "Failed to load bundle specials.")
+      : null;
 
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null);
   const [editingHero, setEditingHero] = useState<HomeHeroSlide | null>(null);
@@ -2068,14 +2076,20 @@ const Content = () => {
         delay={0.24}
         className="mt-8 mb-10"
       >
-        {bundleSetupError && (
+        {bundleTablesMissing && (
           <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
             <p className="font-medium text-amber-200">Bundle tables not set up</p>
-            <p className="mt-1 text-muted-foreground">{bundleSetupError}</p>
+            <p className="mt-1 text-muted-foreground">{BUNDLE_SPECIALS_SETUP_HINT}</p>
             <p className="mt-2 text-xs text-muted-foreground">
               Run <code className="text-[11px]">docs/SUPABASE_BUNDLE_SPECIALS.sql</code> in
               Supabase SQL Editor.
             </p>
+          </div>
+        )}
+        {bundleLoadError && (
+          <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm">
+            <p className="font-medium text-red-200">Could not load bundle specials</p>
+            <p className="mt-1 text-muted-foreground">{bundleLoadError}</p>
           </div>
         )}
 
@@ -2131,7 +2145,7 @@ const Content = () => {
               </div>
             );
           })}
-          {!bundleSetupError && bundleSpecials.length === 0 && (
+          {!bundleTablesMissing && !bundleLoadError && bundleSpecials.length === 0 && (
             <p className="text-xs text-muted-foreground">
               No bundles yet. Run the SQL seed script to create the four launch specials.
             </p>
@@ -4570,6 +4584,8 @@ const Content = () => {
                 Recommended <strong>1280×800</strong> (16:10) for marquee cards.
                 Use a relative path like <code className="text-xs">bundles/mens-trio.jpg</code> — not{" "}
                 <code className="text-xs">hero-assets/bundles/...</code>.
+                If upload fails with 400, run{" "}
+                <code className="text-xs">docs/SUPABASE_HERO_ASSETS_STORAGE.sql</code>.
               </p>
               <Input
                 value={bundleForm.heroImageUrl}
@@ -4600,7 +4616,7 @@ const Content = () => {
               />
               {bundleForm.heroImageUrl && (
                 <img
-                  src={heroStorageImageUrl(bundleForm.heroImageUrl)}
+                  src={bundleStorageImageUrl(bundleForm.heroImageUrl)}
                   alt="Bundle hero"
                   className="mt-2 max-h-32 rounded-lg border border-border/60 object-cover"
                 />

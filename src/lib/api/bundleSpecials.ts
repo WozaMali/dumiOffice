@@ -8,6 +8,9 @@ import type {
 export const BUNDLE_SPECIALS_SETUP_HINT =
   "Run docs/SUPABASE_BUNDLE_SPECIALS.sql in the Supabase SQL Editor, then refresh this page.";
 
+export const BUNDLE_STORAGE_SETUP_HINT =
+  "Run docs/SUPABASE_HERO_ASSETS_STORAGE.sql in Supabase SQL Editor so Office can upload bundle images to hero-assets/bundles/.";
+
 function isMissingBundleTables(error: unknown): boolean {
   const err = error as { code?: string; message?: string; details?: string } | null;
   const combined = `${err?.message || ""} ${err?.details || ""}`.toLowerCase();
@@ -177,19 +180,52 @@ export const bundleSpecialsApi = {
 
   async uploadHeroImage(file: File, code: string): Promise<string> {
     const bucket = "hero-assets";
+    const safeCode = code.trim().toLowerCase().replace(/[^a-z0-9-]/g, "") || "bundle";
     const ext = file.name.includes(".")
       ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
       : ".jpg";
-    const path = `bundles/${code}${ext}`;
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
-      upsert: true,
-      contentType: file.type || undefined,
-    });
-    if (error || !data) {
-      throw error || new Error("Failed to upload bundle hero image");
+    const path = `bundles/${safeCode}${ext}`;
+    const contentType =
+      file.type ||
+      (ext === ".png"
+        ? "image/png"
+        : ext === ".webp"
+          ? "image/webp"
+          : "image/jpeg");
+
+    const upload = (upsert: boolean) =>
+      supabase.storage.from(bucket).upload(path, file, {
+        upsert,
+        contentType,
+      });
+
+    let { data, error } = await upload(true);
+
+    if (error) {
+      const message = (error.message || "").toLowerCase();
+      if (message.includes("already exists") || message.includes("duplicate")) {
+        await supabase.storage.from(bucket).remove([path]);
+        ({ data, error } = await upload(false));
+      }
     }
+
+    if (error || !data) {
+      const detail = error?.message || "Failed to upload bundle hero image";
+      const hint = /policy|permission|row-level security|jwt|not authorized/i.test(
+        detail,
+      )
+        ? ` ${BUNDLE_STORAGE_SETUP_HINT}`
+        : "";
+      throw new Error(`${detail}.${hint}`);
+    }
+
     return data.path;
   },
 };
 
 export { isMissingBundleTables };
+
+export function isBundleSetupRequired(error: unknown): boolean {
+  if (isMissingBundleTables(error)) return true;
+  return (error as Error | null)?.message === BUNDLE_SPECIALS_SETUP_HINT;
+}
