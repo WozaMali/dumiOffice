@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { FrontPopup } from "@/types/database";
+import { compressImageForUpload } from "@/lib/utils/compress-image";
 
 export const frontPopupApi = {
   async getByCode(code: string): Promise<FrontPopup | null> {
@@ -37,9 +38,12 @@ export const frontPopupApi = {
 
   async uploadImage(file: File): Promise<string> {
     const bucket = "hero-assets";
-    const path = `front-popup/images/${Date.now()}-${file.name}`;
+    const compressed = await compressImageForUpload(file, "popup");
+    const path = `front-popup/images/${Date.now()}-${compressed.name}`;
 
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file);
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(path, compressed, { contentType: compressed.type || undefined });
 
     if (error || !data) {
       throw error || new Error("Failed to upload popup image");

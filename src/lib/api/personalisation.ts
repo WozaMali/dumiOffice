@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { PersonalisationFont, PersonalisationSettings } from "@/types/database";
 import type { PersonalisationCategoryCode } from "@/lib/utils/personalisation";
+import { compressImageForUpload } from "@/lib/utils/compress-image";
 
 export const PERSONALISATION_SETUP_HINT =
   "Run docs/SUPABASE_PERSONALISATION_REPAIR.sql in the Supabase SQL Editor, then refresh this page.";
@@ -151,9 +152,12 @@ export const personalisationApi = {
     category: PersonalisationCategoryCode,
   ): Promise<string> {
     const bucket = "hero-assets";
-    const path = `personalisation/${category}/${Date.now()}-${file.name}`;
+    const compressed = await compressImageForUpload(file, "personalisation");
+    const path = `personalisation/${category}/${Date.now()}-${compressed.name}`;
 
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file);
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(path, compressed, { contentType: compressed.type || undefined });
 
     if (error || !data) {
       throw error || new Error("Failed to upload personalisation preview image");

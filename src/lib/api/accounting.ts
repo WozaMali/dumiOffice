@@ -8,6 +8,7 @@ import type {
   Order,
   PaymentStatus,
 } from "@/types/database";
+import { compressFileForUpload } from "@/lib/utils/compress-upload";
 
 export const accountingApi = {
   async listCategories(): Promise<AccountingCategory[]> {
@@ -177,11 +178,12 @@ export const accountingApi = {
     const { transactionId, file, uploadedBy } = params;
 
     const bucket = "accounting-files";
-    const path = `transactions/${transactionId}/${Date.now()}-${file.name}`;
+    const uploadFile = await compressFileForUpload(file, "attachment");
+    const path = `transactions/${transactionId}/${Date.now()}-${uploadFile.name}`;
 
     const { data: storageData, error: storageError } = await supabase.storage
       .from(bucket)
-      .upload(path, file);
+      .upload(path, uploadFile, { contentType: uploadFile.type || undefined });
 
     if (storageError || !storageData) {
       throw storageError || new Error("Failed to upload file");
@@ -194,9 +196,9 @@ export const accountingApi = {
       .insert({
         transaction_id: transactionId,
         file_url: fileUrl,
-        file_name: file.name,
-        mime_type: file.type,
-        size_bytes: file.size,
+        file_name: uploadFile.name,
+        mime_type: uploadFile.type,
+        size_bytes: uploadFile.size,
         uploaded_by: uploadedBy,
       })
       .select()

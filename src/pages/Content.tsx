@@ -64,6 +64,7 @@ import {
   heroStorageImageUrl,
   productStorageImageUrl,
 } from "@/lib/utils/storage-image";
+import { compressImageForUpload } from "@/lib/utils/compress-image";
 import { supabase } from "@/lib/supabase";
 import type {
   Collection,
@@ -1178,10 +1179,11 @@ const Content = () => {
   const productImageUploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const bucket = "product_assets";
-      const path = `products/${Date.now()}-${file.name}`;
+      const compressed = await compressImageForUpload(file, "product");
+      const path = `products/${Date.now()}-${compressed.name}`;
       const { data, error } = await supabase.storage
         .from(bucket)
-        .upload(path, file);
+        .upload(path, compressed, { contentType: compressed.type || undefined });
       if (error || !data) {
         throw error || new Error("Failed to upload product image");
       }
@@ -1205,10 +1207,11 @@ const Content = () => {
         throw new Error("No product selected.");
       }
       const bucket = "product_assets";
-      const path = `products/gallery/${Date.now()}-${file.name}`;
+      const compressed = await compressImageForUpload(file, "product");
+      const path = `products/gallery/${Date.now()}-${compressed.name}`;
       const { data, error } = await supabase.storage
         .from(bucket)
-        .upload(path, file);
+        .upload(path, compressed, { contentType: compressed.type || undefined });
       if (error || !data) {
         throw error || new Error("Failed to upload gallery image");
       }

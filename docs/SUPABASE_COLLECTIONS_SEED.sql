@@ -15,9 +15,17 @@ alter table public.collections
 alter table public.collections
   add column if not exists image text;
 
-create unique index if not exists idx_collections_code_unique
-  on public.collections (code)
-  where code is not null and btrim(code) <> '';
+-- Ensure no null codes before unique index (re-run safe)
+update public.collections
+set code = slug
+where (code is null or btrim(code) = '')
+  and slug is not null
+  and btrim(slug) <> '';
+
+-- Full unique index required for ON CONFLICT (code)
+drop index if exists idx_collections_code_unique;
+create unique index idx_collections_code_unique
+  on public.collections (code);
 
 insert into public.collections (code, slug, name, tagline, description, is_active)
 values

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { Collection, CollectionProduct, Product } from "@/types/database";
+import { compressImageForUpload } from "@/lib/utils/compress-image";
 
 export const collectionsApi = {
   async list(): Promise<Collection[]> {
@@ -42,14 +43,18 @@ export const collectionsApi = {
   /** Upload shop card image to hero-assets/collections/{code}-hero.{ext} */
   async uploadHeroImage(file: File, collectionCode: string): Promise<string> {
     const bucket = "hero-assets";
-    const ext = file.name.includes(".")
-      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
-      : ".jpg";
+    const compressed = await compressImageForUpload(file, "collection");
+    const ext = compressed.name.includes(".")
+      ? compressed.name.slice(compressed.name.lastIndexOf(".")).toLowerCase()
+      : ".webp";
     const path = `collections/${collectionCode}-hero${ext}`;
 
     const { data, error } = await supabase.storage
       .from(bucket)
-      .upload(path, file, { upsert: true, contentType: file.type || undefined });
+      .upload(path, compressed, {
+        upsert: true,
+        contentType: compressed.type || undefined,
+      });
 
     if (error || !data) {
       throw error || new Error("Failed to upload collection image");

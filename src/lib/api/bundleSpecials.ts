@@ -5,6 +5,7 @@ import type {
   BundleSpecialWithSlots,
 } from "@/types/database";
 import { normalizeBundleHeroForStorage } from "@/lib/utils/bundleSpecials";
+import { compressImageForUpload } from "@/lib/utils/compress-image";
 
 export const BUNDLE_SPECIALS_SETUP_HINT =
   "Run docs/SUPABASE_BUNDLE_SPECIALS.sql in the Supabase SQL Editor, then refresh this page.";
@@ -182,12 +183,13 @@ export const bundleSpecialsApi = {
   async uploadHeroImage(file: File, code: string): Promise<string> {
     const bucket = "hero-assets";
     const safeCode = code.trim().toLowerCase().replace(/[^a-z0-9-]/g, "") || "bundle";
-    const ext = file.name.includes(".")
-      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
-      : ".jpg";
+    const compressed = await compressImageForUpload(file, "bundle");
+    const ext = compressed.name.includes(".")
+      ? compressed.name.slice(compressed.name.lastIndexOf(".")).toLowerCase()
+      : ".webp";
     const path = `bundle-specials/${safeCode}${ext}`;
     const contentType =
-      file.type ||
+      compressed.type ||
       (ext === ".png"
         ? "image/png"
         : ext === ".webp"
@@ -195,7 +197,7 @@ export const bundleSpecialsApi = {
           : "image/jpeg");
 
     const upload = (upsert: boolean) =>
-      supabase.storage.from(bucket).upload(path, file, {
+      supabase.storage.from(bucket).upload(path, compressed, {
         upsert,
         contentType,
       });

@@ -1,5 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { HomeHeroSlide } from "@/types/database";
+import { compressImageForUpload } from "@/lib/utils/compress-image";
+import { compressPdfForUpload } from "@/lib/utils/compress-pdf";
 
 export const homeHeroApi = {
   async list(): Promise<HomeHeroSlide[]> {
@@ -56,9 +58,12 @@ export const homeHeroApi = {
 
   async uploadPdf(file: File): Promise<string> {
     const bucket = "hero-assets";
-    const path = `home-hero/docs/${Date.now()}-${file.name}`;
+    const compressed = await compressPdfForUpload(file, "document");
+    const path = `home-hero/docs/${Date.now()}-${compressed.name}`;
 
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file);
+    const { data, error } = await supabase.storage.from(bucket).upload(path, compressed, {
+      contentType: "application/pdf",
+    });
 
     if (error || !data) {
       throw error || new Error("Failed to upload hero PDF");
@@ -72,9 +77,10 @@ export const homeHeroApi = {
     variant: "desktop" | "mobile" | "default" = "default",
   ): Promise<string> {
     const bucket = "hero-assets";
-    const ext = file.name.includes(".")
-      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
-      : ".jpg";
+    const compressed = await compressImageForUpload(file, "hero");
+    const ext = compressed.name.includes(".")
+      ? compressed.name.slice(compressed.name.lastIndexOf(".")).toLowerCase()
+      : ".webp";
     const prefix =
       variant === "desktop"
         ? "desktop"
@@ -83,9 +89,9 @@ export const homeHeroApi = {
           : String(Date.now());
     const path = `home-hero/images/${prefix}-${Date.now()}${ext}`;
 
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
+    const { data, error } = await supabase.storage.from(bucket).upload(path, compressed, {
       upsert: true,
-      contentType: file.type || undefined,
+      contentType: compressed.type || undefined,
     });
 
     if (error || !data) {

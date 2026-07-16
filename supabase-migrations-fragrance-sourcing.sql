@@ -1,4 +1,4 @@
-s- Fragrance sourcing: scents, pro-forma, packaging
+-- Fragrance sourcing: scents, pro-forma, packaging
 -- Safe to run on top of existing schema
 
 -- 1) Master list of scents purchased from suppliers

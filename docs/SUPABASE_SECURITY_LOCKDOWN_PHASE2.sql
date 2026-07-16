@@ -7,6 +7,8 @@
 -- - Remaining "RLS Disabled in Public" tables from Security Advisor
 -- - "Security Definer View" (home_bestsellers_auto)
 -- - "Function Search Path Mutable" (loyalty_points_for_spend_zar)
+--
+-- Skips tables that do not exist.
 
 begin;
 
@@ -33,31 +35,24 @@ end
 $$;
 
 -- Recreate safe baseline policies (no user_metadata references)
-alter table if exists public.customers enable row level security;
-drop policy if exists "authenticated_read" on public.customers;
-create policy "authenticated_read"
-on public.customers
-for select
-to authenticated
-using (true);
+do $$
+begin
+  if to_regclass('public.customers') is not null then
+    execute 'alter table public.customers enable row level security';
+    execute 'drop policy if exists "authenticated_read" on public.customers';
+    execute 'create policy "authenticated_read" on public.customers for select to authenticated using (true)';
+    execute 'drop policy if exists "authenticated_write" on public.customers';
+    execute 'create policy "authenticated_write" on public.customers for all to authenticated using (true) with check (true)';
+  end if;
 
-drop policy if exists "authenticated_write" on public.customers;
-create policy "authenticated_write"
-on public.customers
-for all
-to authenticated
-using (true)
-with check (true);
-
-alter table if exists public.loyalty_point_transactions enable row level security;
-drop policy if exists "authenticated_read" on public.loyalty_point_transactions;
-create policy "authenticated_read"
-on public.loyalty_point_transactions
-for select
-to authenticated
-using (true);
-
--- No direct write policy for loyalty ledger; writes should flow via RPC.
+  if to_regclass('public.loyalty_point_transactions') is not null then
+    execute 'alter table public.loyalty_point_transactions enable row level security';
+    execute 'drop policy if exists "authenticated_read" on public.loyalty_point_transactions';
+    execute 'create policy "authenticated_read" on public.loyalty_point_transactions for select to authenticated using (true)';
+    -- No direct write policy for loyalty ledger; writes should flow via RPC.
+  end if;
+end
+$$;
 
 -- -------------------------------------------------------------------
 -- 2) Enable RLS + add baseline policies for newly flagged tables
@@ -72,7 +67,10 @@ begin
     'public.pages'
   ]
   loop
-    execute format('alter table if exists %s enable row level security', t);
+    if to_regclass(t) is null then
+      continue;
+    end if;
+    execute format('alter table %s enable row level security', t);
     execute format('drop policy if exists "public_read" on %s', t);
     execute format('create policy "public_read" on %s for select using (true)', t);
     execute format('drop policy if exists "authenticated_write" on %s', t);
@@ -88,11 +86,16 @@ begin
     'public.perfume_pumps',
     'public.product_notes',
     'public.product_sizes',
+    'public.product_images',
     'public.scent_proforma_extra_lines',
-    'public.scent_purchases'
+    'public.scent_purchases',
+    'public.essential_oil_products'
   ]
   loop
-    execute format('alter table if exists %s enable row level security', t);
+    if to_regclass(t) is null then
+      continue;
+    end if;
+    execute format('alter table %s enable row level security', t);
     execute format('drop policy if exists "authenticated_read" on %s', t);
     execute format('create policy "authenticated_read" on %s for select to authenticated using (true)', t);
     execute format('drop policy if exists "authenticated_write" on %s', t);
@@ -140,4 +143,3 @@ commit;
 -- After running:
 -- 1) Re-run Supabase Security Advisor scan.
 -- 2) If any table still appears, paste the exact table/policy name and we can add a precise patch.
-

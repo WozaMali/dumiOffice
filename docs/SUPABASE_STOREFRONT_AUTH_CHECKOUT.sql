@@ -129,6 +129,26 @@ create table if not exists public.store_order_items (
 
 create index if not exists idx_store_order_items_order_id on public.store_order_items (order_id);
 
+-- Proof of payment metadata (files in Storage bucket payment_proofs)
+create table if not exists public.store_payment_proofs (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid references public.store_orders(id) on delete cascade,
+  client_id uuid references public.store_clients(id) on delete set null,
+  public_url text,
+  storage_path text,
+  file_name text,
+  file_type text,
+  file_size_bytes bigint,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_store_payment_proofs_order_id
+  on public.store_payment_proofs (order_id);
+create index if not exists idx_store_payment_proofs_client_id
+  on public.store_payment_proofs (client_id);
+create index if not exists idx_store_payment_proofs_created_at
+  on public.store_payment_proofs (created_at desc);
+
 -- Existing deployments: add consent fields if table already exists.
 alter table if exists public.store_client_preferences
   add column if not exists terms_accepted_at timestamptz;
@@ -147,6 +167,7 @@ alter table public.store_client_addresses enable row level security;
 alter table public.store_client_preferences enable row level security;
 alter table public.store_orders enable row level security;
 alter table public.store_order_items enable row level security;
+alter table public.store_payment_proofs enable row level security;
 
 drop policy if exists store_clients_select_own on public.store_clients;
 create policy store_clients_select_own
@@ -235,6 +256,48 @@ for select
 to authenticated
 using (
   exists (
+    select 1
+    from public.store_orders o
+    join public.store_clients c on c.id = o.client_id
+    where o.id = order_id
+      and c.auth_user_id = auth.uid()
+  )
+);
+
+drop policy if exists store_payment_proofs_select_own on public.store_payment_proofs;
+create policy store_payment_proofs_select_own
+on public.store_payment_proofs
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.store_clients c
+    where c.id = client_id
+      and c.auth_user_id = auth.uid()
+  )
+  or exists (
+    select 1
+    from public.store_orders o
+    join public.store_clients c on c.id = o.client_id
+    where o.id = order_id
+      and c.auth_user_id = auth.uid()
+  )
+);
+
+drop policy if exists store_payment_proofs_insert_own on public.store_payment_proofs;
+create policy store_payment_proofs_insert_own
+on public.store_payment_proofs
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.store_clients c
+    where c.id = client_id
+      and c.auth_user_id = auth.uid()
+  )
+  or exists (
     select 1
     from public.store_orders o
     join public.store_clients c on c.id = o.client_id

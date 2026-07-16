@@ -45,9 +45,20 @@ set code = 'diffuser',
 where code in ('diffusers', 'diffuser')
    or slug in ('diffusers', 'diffuser');
 
+-- Backfill any remaining null codes from slug (needed for a full unique index)
+update public.collections
+set code = slug
+where (code is null or btrim(code) = '')
+  and slug is not null
+  and btrim(slug) <> '';
+
+-- Full unique indexes (partial indexes cannot be used with ON CONFLICT (col))
+drop index if exists idx_collections_code_unique;
 create unique index if not exists idx_collections_code_unique
-  on public.collections (code)
-  where code is not null and btrim(code) <> '';
+  on public.collections (code);
+
+create unique index if not exists idx_collections_slug_unique
+  on public.collections (slug);
 
 -- ---------------------------------------------------------------------------
 -- Product categories (cosmetics lines) — text column, no enum lock
@@ -116,8 +127,8 @@ values
     true,
     now()
   )
-on conflict (slug) do update set
-  code = excluded.code,
+on conflict (code) do update set
+  slug = excluded.slug,
   name = excluded.name,
   tagline = excluded.tagline,
   description = excluded.description,
@@ -130,7 +141,6 @@ set
   slug = v.code,
   name = v.name,
   tagline = v.tagline,
-  description = v.description,
   is_active = true
 from (values
   ('mens', 'Men''s Line', 'Structured signatures with warmth, woods, and presence.'),
