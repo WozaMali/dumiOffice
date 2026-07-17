@@ -1,6 +1,6 @@
 -- =============================================================================
 -- DUMI OFFICE + STOREFRONT - ALL-IN-ONE SUPABASE INSTALL
--- Updated: 2026-07-16T04:10 (skip missing tables in security lockdown)
+-- Updated: 2026-07-17T01:44 (includes collections.code)
 -- Paste entire file into Supabase SQL Editor and Run
 -- Buckets: docs/SUPABASE_STORAGE_BUCKETS.md
 -- =============================================================================
@@ -18,7 +18,7 @@
 -- ============================================
 -- Shared by: Office App (Admin) + Main App (Customer-facing)
 -- Version: 1.0
--- Last updated: 2026-02-27
+-- Last Updated: 2026-07-17T01:44 (includes collections.code)
 --
 -- This schema supports:
 -- - Office App: Order management, inventory, fulfilment, reporting
@@ -1369,7 +1369,7 @@ create index if not exists idx_scent_proformas_invoice_date on public.scent_prof
 -- ---------------------------------------------------------------------------
 -- SOURCE: docs\SUPABASE_DE_ORDER_APPROVED_EXPENSES.sql
 -- ---------------------------------------------------------------------------
--- DE order approval + expense alignment (Oils order history → Accounting / Expenses / Vendors)
+-- DE order approval + expense alignment (Oils order history ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Accounting / Expenses / Vendors)
 -- Run once in Supabase SQL editor.
 
 -- 1) Approval status on fragrance purchase orders (pro-formas)
@@ -1992,7 +1992,7 @@ using (auth.role() = 'authenticated');
 -- SOURCE: docs\SUPABASE_LOYALTY_POINTS.sql
 -- ---------------------------------------------------------------------------
 -- Dumi Essence: loyalty points (office customers)
--- Rule: R2.00 spent = 1 point → floor(amount_zar / 2) points.
+-- Rule: R2.00 spent = 1 point ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ floor(amount_zar / 2) points.
 -- Run in Supabase SQL Editor after your core customers/orders schema exists.
 
 -- Balance on customer row (fast display; ledger is source of truth for history)
@@ -2126,7 +2126,7 @@ using (
 -- ---------------------------------------------------------------------------
 -- SOURCE: docs\SUPABASE_CRM_SYNC_FROM_STORE_RPC.sql
 -- ---------------------------------------------------------------------------
--- Dumi: sync public.store_clients → public.customers (+ default public.addresses)
+-- Dumi: sync public.store_clients ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ public.customers (+ default public.addresses)
 -- Run in Supabase SQL Editor (fixes Office /clients not updating when RLS blocks direct writes).
 --
 -- Why: browser sync used customersApi + RLS policies on customers/addresses. If policies are
@@ -2303,15 +2303,15 @@ grant execute on function public.sync_crm_from_store_client(uuid) to authenticat
 -- so http://localhost:8080/clients (and production /clients) shows the same name, phone,
 -- marketing flags, and default delivery address after they save on /walk-in.
 --
--- Prefer (recommended): docs/SUPABASE_CRM_SYNC_FROM_STORE_RPC.sql — SECURITY DEFINER RPC so sync
+-- Prefer (recommended): docs/SUPABASE_CRM_SYNC_FROM_STORE_RPC.sql ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â SECURITY DEFINER RPC so sync
 -- works even when these RLS policies are missing or conflict with office policies.
 --
--- Run in Supabase → SQL Editor after `customers` and `addresses` exist.
+-- Run in Supabase ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ SQL Editor after `customers` and `addresses` exist.
 --
 -- Prereq: the app calls `customersApi.syncFromStorefrontWalkIn` with the same email as
 -- `auth.users.email` / `auth.jwt()->>'email'` (Google sign-in is fine; match is case-insensitive).
 --
--- If RLS is OFF on these tables, the app already syncs — you can skip this file.
+-- If RLS is OFF on these tables, the app already syncs ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â you can skip this file.
 --
 -- If RLS is ON: add the policies below IN ADDITION TO whatever your office staff uses
 -- (e.g. broad SELECT/ALL for authenticated admins). Multiple permissive policies combine with OR.
@@ -3031,7 +3031,7 @@ execute function public.reverse_loyalty_points_for_store_order_delete();
 -- SOURCE: docs\SUPABASE_HOME_HERO_SLIDES.sql
 -- ---------------------------------------------------------------------------
 -- Creates home_hero_slides for storefront hero + Office content cards.
--- Run in Supabase SQL Editor (Dashboard → SQL → New query). Safe to re-run.
+-- Run in Supabase SQL Editor (Dashboard ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ SQL ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ New query). Safe to re-run.
 --
 -- Related: client-notes section header seed lives in docs/SUPABASE_HOME_CLIENT_NOTES.sql
 
@@ -3161,7 +3161,7 @@ to authenticated
 using (true)
 with check (true);
 
--- Main hero (top banner) — edit image/copy in Office Content
+-- Main hero (top banner) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â edit image/copy in Office Content
 insert into public.home_hero_slides (
   code, kicker, headline, subheadline,
   primary_cta_label, primary_cta_href,
@@ -3192,7 +3192,7 @@ values (
   'fresh-in-store',
   'New Arrivals',
   'Fresh In Store',
-  'Just landed — the newest additions to the house.',
+  'Just landed ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the newest additions to the house.',
   'Shop new arrivals',
   '/shop',
   true,
@@ -3235,8 +3235,8 @@ on conflict (code) do update set
 --   background_image_url_mobile = 'home-hero/images/mobile.jpg',
 --   updated_at = now()
 -- where code = 'put-your-name-on-it';
--- Home carousel desktop: 2880×1228 or 1440×614. Home carousel mobile: 1080×1920 (9:16).
--- Other hero slides/cards: use 2400×1350 or 1920×1080 (16:9). Keep subject in center 60%.
+-- Home carousel desktop: 2880ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â1228 or 1440ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â614. Home carousel mobile: 1080ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â1920 (9:16).
+-- Other hero slides/cards: use 2400ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â1350 or 1920ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â1080 (16:9). Keep subject in center 60%.
 
 -- Gift Guide page hero
 insert into public.home_hero_slides (
@@ -3299,7 +3299,7 @@ on conflict (code) do update set
   sort_order = excluded.sort_order,
   updated_at = now();
 
--- Our Journey page (hero + promise section — set background_image_url in Office)
+-- Our Journey page (hero + promise section ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â set background_image_url in Office)
 insert into public.home_hero_slides (
   code, kicker, headline, subheadline, body, is_active, sort_order
 )
@@ -3357,7 +3357,7 @@ select
 -- ---------------------------------------------------------------------------
 -- SOURCE: docs\SUPABASE_HOME_CLIENT_NOTES.sql
 -- ---------------------------------------------------------------------------
--- Home page "Client Notes" testimonials (storefront Index → Client Notes section)
+-- Home page "Client Notes" testimonials (storefront Index ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Client Notes section)
 -- Run once in Supabase SQL Editor. Safe to re-run.
 -- Requires: docs/SUPABASE_HOME_HERO_SLIDES.sql (home_hero_slides table)
 
@@ -3486,7 +3486,7 @@ select
 -- ---------------------------------------------------------------------------
 -- SOURCE: docs\SUPABASE_STOREFRONT_COLLECTIONS.sql
 -- ---------------------------------------------------------------------------
--- Storefront "Shop the House" collection cards (Office Content → Storefront collections)
+-- Storefront "Shop the House" collection cards (Office Content ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Storefront collections)
 -- Run in Supabase SQL Editor. Safe to re-run.
 --
 -- Main app: read docs/STOREFRONT_COLLECTIONS.md for query + image URL resolver.
@@ -3549,12 +3549,12 @@ create unique index if not exists idx_collections_slug_unique
   on public.collections (slug);
 
 -- ---------------------------------------------------------------------------
--- Product categories (cosmetics lines) — text column, no enum lock
+-- Product categories (cosmetics lines) ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â text column, no enum lock
 -- ---------------------------------------------------------------------------
 -- Office inventory categories: Perfume, Diffuser, Car Perfume, Shower Gel, Body Lotion, Body Oil
 -- Assign collection_code on products when linking to shop cards:
---   car-perfumes  → Car Perfume products
---   cosmetics     → Shower Gel / Body Lotion / Body Oil (grouped under one shop card)
+--   car-perfumes  ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Car Perfume products
+--   cosmetics     ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Shower Gel / Body Lotion / Body Oil (grouped under one shop card)
 
 -- ---------------------------------------------------------------------------
 -- Seed / upsert shop collection cards
@@ -3601,7 +3601,7 @@ values
     'car-perfumes',
     'car-perfumes',
     'Car Perfume',
-    'Compact scent for every drive — fresh, warm, unmistakably Dumi.',
+    'Compact scent for every drive ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â fresh, warm, unmistakably Dumi.',
     'Car vent clips and cabin fragrance.',
     true,
     now()
@@ -3610,7 +3610,7 @@ values
     'cosmetics',
     'cosmetics',
     'Cosmetics',
-    'Body care essentials — lotions, shower gels, and body oils.',
+    'Body care essentials ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â lotions, shower gels, and body oils.',
     'Lotions, shower gels, and body oils for everyday ritual.',
     true,
     now()
@@ -3635,8 +3635,8 @@ from (values
   ('womens', 'Women''s Line', 'Polished florals and luminous amber compositions.'),
   ('unisex', 'Unisex Line', 'Modern, versatile luxury for everyday wear.'),
   ('diffuser', 'Diffusers Line', 'Room-fresh sophistication, amplified.'),
-  ('car-perfumes', 'Car Perfume', 'Compact scent for every drive — fresh, warm, unmistakably Dumi.'),
-  ('cosmetics', 'Cosmetics', 'Body care essentials — lotions, shower gels, and body oils.')
+  ('car-perfumes', 'Car Perfume', 'Compact scent for every drive ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â fresh, warm, unmistakably Dumi.'),
+  ('cosmetics', 'Cosmetics', 'Body care essentials ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â lotions, shower gels, and body oils.')
 ) as v(code, name, tagline)
 where c.code = v.code;
 
@@ -3671,8 +3671,8 @@ where code in ('mens', 'womens', 'unisex', 'diffuser', 'car-perfumes', 'cosmetic
 order by code;
 
 -- ---------------------------------------------------------------------------
--- After uploading to hero-assets bucket (Office Content → Upload image, or
--- Storage → hero-assets → collections/), set paths like:
+-- After uploading to hero-assets bucket (Office Content ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Upload image, or
+-- Storage ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ hero-assets ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ collections/), set paths like:
 -- ---------------------------------------------------------------------------
 -- update public.collections
 -- set hero_image_url = 'collections/mens-hero.jpg', updated_at = now()
@@ -3778,7 +3778,7 @@ from public.collections
 where code in ('diffuser', 'car-perfumes', 'cosmetics')
 order by code;
 
--- Set images after upload to hero-assets (Office Content → Upload, or Storage):
+-- Set images after upload to hero-assets (Office Content ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Upload, or Storage):
 -- update public.collections
 -- set hero_image_url = 'collections/diffuser-hero.jpg',
 --     image = 'collections/diffuser-hero.jpg',
@@ -3825,7 +3825,7 @@ create table if not exists public.bundle_specials (
 );
 
 -- ---------------------------------------------------------------------------
--- Selection slots (tabs on storefront — e.g. Men's ×3, or His & Hers Men's ×2 + Women's ×2)
+-- Selection slots (tabs on storefront ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â e.g. Men's ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â3, or His & Hers Men's ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â2 + Women's ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â2)
 -- collection_code filters products.collection_code for the pick grid
 -- ---------------------------------------------------------------------------
 create table if not exists public.bundle_special_slots (
@@ -3938,7 +3938,7 @@ values
     'his-and-hers',
     'His & Hers',
     '2 Men''s + 2 Women''s',
-    'The perfect pair — two from each line.',
+    'The perfect pair ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â two from each line.',
     699.99,
     900.00,
     true,
@@ -4063,7 +4063,7 @@ on conflict (code) do nothing;
 -- ---------------------------------------------------------------------------
 -- SOURCE: docs\SUPABASE_PERSONALISATION_REPAIR.sql
 -- ---------------------------------------------------------------------------
--- Personalisation — run this ONE file in Supabase → SQL Editor → Run
+-- Personalisation ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â run this ONE file in Supabase ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ SQL Editor ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Run
 -- Safe to re-run. Creates tables, repairs missing columns, seeds data, reloads API schema.
 --
 -- After success you should see one row below with settings_count = 1, fonts_count >= 3.
@@ -4345,7 +4345,7 @@ select
   (select count(*) from public.personalisation_fonts where is_active = true) as fonts_count;
 
 -- If Office STILL shows "schema cache" after 15s:
--- Supabase Dashboard → Project Settings → General → Restart project
+-- Supabase Dashboard ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Project Settings ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ General ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Restart project
 -- Then hard-refresh Office Content (Ctrl+Shift+R).
 
 
@@ -4391,7 +4391,7 @@ using (bucket_id = 'accounting-files' and auth.role() = 'authenticated');
 -- SOURCE: docs\SUPABASE_RLS_OFFICE_FIX.sql
 -- ---------------------------------------------------------------------------
 -- Supabase RLS + Storage policy fix for the Office app (browser/anon key)
--- Run this in Supabase Dashboard → SQL Editor.
+-- Run this in Supabase Dashboard ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ SQL Editor.
 --
 -- What it enables:
 -- - Storage uploads to bucket: product_assets (and reads)
@@ -4483,7 +4483,7 @@ $$;
 -- SOURCE: docs\SUPABASE_HERO_ASSETS_STORAGE.sql
 -- ---------------------------------------------------------------------------
 -- hero-assets bucket for Office uploads (hero slides, collections, bundles, personalisation).
--- Run in Supabase Dashboard → SQL Editor. Safe to re-run.
+-- Run in Supabase Dashboard ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ SQL Editor. Safe to re-run.
 --
 -- Fixes Office upload 400s for paths like bundle-specials/mens-trio.png when policies were missing.
 
@@ -5101,7 +5101,7 @@ commit;
 -- SOURCE: docs\SUPABASE_HOME_HERO_SLIDES_REMOVE_GIFT_PERFECT_BULLETS.sql
 -- ---------------------------------------------------------------------------
 -- Remove legacy gift-guide section headers and feature bullets from home_hero_slides.
--- Run once in Supabase SQL Editor, then refresh Office Content → Hero moments.
+-- Run once in Supabase SQL Editor, then refresh Office Content ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Hero moments.
 
 delete from public.home_hero_slides
 where code in (
@@ -5136,3 +5136,294 @@ where code in (
   'gift-guide-feature-premium'
 );
 
+-- #############################################################################
+-- SECTION: PRODUCTS FRAGRANCE / CONTENT COLUMNS (Inventory <-> Content)
+-- #############################################################################
+
+-- >>> BEGIN docs/SUPABASE_PRODUCTS_FRAGRANCE_COLUMNS.sql
+-- Add fragrance / Content fields used by Inventory ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Fragrance products.
+-- Safe to re-run. Fixes: Could not find the 'brand' column of 'products'
+
+alter table public.products
+  add column if not exists brand text,
+  add column if not exists item text,
+  add column if not exists inspired_by text,
+  add column if not exists designer text,
+  add column if not exists collection_code text,
+  add column if not exists code text,
+  add column if not exists name text,
+  add column if not exists category text,
+  add column if not exists base_price numeric(12,2),
+  add column if not exists price_30ml numeric(12,2),
+  add column if not exists price_50ml numeric(12,2),
+  add column if not exists price_100ml numeric(12,2),
+  add column if not exists short_description text,
+  add column if not exists long_description text,
+  add column if not exists default_size text,
+  add column if not exists primary_image_path text,
+  add column if not exists is_bestseller boolean default false,
+  add column if not exists is_new boolean default false,
+  add column if not exists reassurance_copy text;
+
+create index if not exists idx_products_collection_code
+  on public.products (collection_code);
+
+create index if not exists idx_products_brand
+  on public.products (brand);
+
+-- Keep name in sync with product_name for storefront/Content when blank
+update public.products
+set name = product_name
+where (name is null or btrim(name) = '')
+  and product_name is not null;
+
+notify pgrst, 'reload schema';
+
+-- <<< END docs/SUPABASE_PRODUCTS_FRAGRANCE_COLUMNS.sql
+
+-- #############################################################################
+-- SECTION: PRODUCT NOTES + IMAGES (Content Fragrance Notes / Imagery)
+-- #############################################################################
+
+-- >>> BEGIN docs/SUPABASE_PRODUCT_NOTES_AND_IMAGES.sql
+-- Create product_notes + product_images used by Content ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Fragrance products
+-- (Notes / Imagery tabs). Safe to re-run.
+-- Fixes: Could not find the table 'public.product_notes' in the schema cache
+
+create extension if not exists "pgcrypto";
+
+-- ---------------------------------------------------------------------------
+-- product_notes (top / middle / base fragrance notes)
+-- ---------------------------------------------------------------------------
+create table if not exists public.product_notes (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  level text not null check (level in ('top', 'middle', 'base')),
+  note text not null,
+  position integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_product_notes_product_id
+  on public.product_notes (product_id);
+
+create index if not exists idx_product_notes_level_position
+  on public.product_notes (product_id, level, position);
+
+-- ---------------------------------------------------------------------------
+-- product_images (gallery / extra imagery)
+-- ---------------------------------------------------------------------------
+create table if not exists public.product_images (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  kind text not null default 'gallery',
+  path text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_product_images_product_id
+  on public.product_images (product_id);
+
+create index if not exists idx_product_images_sort
+  on public.product_images (product_id, sort_order);
+
+-- ---------------------------------------------------------------------------
+-- RLS (office authenticated write; public/anon read for storefront)
+-- ---------------------------------------------------------------------------
+alter table public.product_notes enable row level security;
+alter table public.product_images enable row level security;
+
+drop policy if exists "Office read product_notes" on public.product_notes;
+drop policy if exists "Office write product_notes" on public.product_notes;
+create policy "Office read product_notes"
+  on public.product_notes
+  for select
+  using (true);
+create policy "Office write product_notes"
+  on public.product_notes
+  for all
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
+
+drop policy if exists "Office read product_images" on public.product_images;
+drop policy if exists "Office write product_images" on public.product_images;
+create policy "Office read product_images"
+  on public.product_images
+  for select
+  using (true);
+create policy "Office write product_images"
+  on public.product_images
+  for all
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
+
+notify pgrst, 'reload schema';
+
+-- <<< END docs/SUPABASE_PRODUCT_NOTES_AND_IMAGES.sql
+
+-- #############################################################################
+-- SECTION: HOME BESTSELLERS (Content Fragrance Promotion)
+-- #############################################################################
+
+-- >>> BEGIN docs/SUPABASE_HOME_BESTSELLERS.sql
+-- Create home_bestsellers used by Content ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Fragrance products ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Promotion
+-- ("Mark as bestseller"). Safe to re-run.
+-- Fixes: Could not find the table 'public.home_bestsellers' in the schema cache
+
+create extension if not exists "pgcrypto";
+
+create table if not exists public.home_bestsellers (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  badge_label text default 'Bestseller',
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (product_id)
+);
+
+create index if not exists idx_home_bestsellers_sort
+  on public.home_bestsellers (sort_order, created_at);
+
+create index if not exists idx_home_bestsellers_active
+  on public.home_bestsellers (is_active);
+
+-- Keep products.is_bestseller available for storefront badges
+alter table public.products
+  add column if not exists is_bestseller boolean default false;
+
+-- RLS: storefront can read active rows; office auth can write
+alter table public.home_bestsellers enable row level security;
+
+drop policy if exists "Public read home_bestsellers" on public.home_bestsellers;
+drop policy if exists "Office write home_bestsellers" on public.home_bestsellers;
+
+create policy "Public read home_bestsellers"
+  on public.home_bestsellers
+  for select
+  using (true);
+
+create policy "Office write home_bestsellers"
+  on public.home_bestsellers
+  for all
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
+
+notify pgrst, 'reload schema';
+
+-- <<< END docs/SUPABASE_HOME_BESTSELLERS.sql
+
+-- #############################################################################
+-- SECTION: COLLECTIONS CODE / STOREFRONT COLUMNS
+-- #############################################################################
+
+-- >>> BEGIN docs/SUPABASE_COLLECTIONS_CODE_COLUMN.sql
+-- Add storefront/Office columns on public.collections (fixes save error).
+-- Safe to re-run.
+-- Fixes: Could not find the 'code' column of 'collections' in the schema cache
+
+alter table public.collections
+  add column if not exists code text,
+  add column if not exists tagline text,
+  add column if not exists hero_image_url text,
+  add column if not exists image text,
+  add column if not exists image_url text,
+  add column if not exists description text,
+  add column if not exists is_active boolean default true,
+  add column if not exists published_at timestamptz,
+  add column if not exists updated_at timestamptz default now();
+
+-- Backfill code from slug when blank
+update public.collections
+set code = slug
+where (code is null or btrim(code) = '')
+  and slug is not null
+  and btrim(slug) <> '';
+
+-- Normalize diffuser naming
+update public.collections
+set code = 'diffuser',
+    slug = 'diffuser'
+where lower(coalesce(code, '')) in ('diffusers', 'diffuser')
+   or lower(coalesce(slug, '')) in ('diffusers', 'diffuser');
+
+-- Mirror hero path into storefront `image` column
+update public.collections
+set image = coalesce(nullif(btrim(image), ''), hero_image_url, image_url)
+where image is null or btrim(image) = '';
+
+update public.collections
+set hero_image_url = coalesce(nullif(btrim(hero_image_url), ''), image, image_url)
+where hero_image_url is null or btrim(hero_image_url) = '';
+
+-- Unique code required for Office upsert onConflict: code
+-- Drop any duplicate null/blank codes first by assigning temporary codes
+update public.collections
+set code = 'collection-' || substr(replace(id::text, '-', ''), 1, 12)
+where code is null or btrim(code) = '';
+
+drop index if exists idx_collections_code_unique;
+create unique index if not exists idx_collections_code_unique
+  on public.collections (code);
+
+create unique index if not exists idx_collections_slug_unique
+  on public.collections (slug);
+
+-- Seed / upsert the shop cards Office expects (mens, womens, unisex, diffuser, Ã¢â‚¬Â¦)
+insert into public.collections (code, slug, name, tagline, description, is_active, published_at)
+values
+  ('mens', 'mens', 'Men''s Line', 'Structured signatures with warmth, woods, and presence.', 'Structured signatures with warmth, woods, and presence.', true, now()),
+  ('womens', 'womens', 'Women''s Line', 'Soft florals, luminous fruits, and elegant trails.', 'Soft florals, luminous fruits, and elegant trails.', true, now()),
+  ('unisex', 'unisex', 'Unisex Line', 'Shared signatures Ã¢â‚¬â€ balanced, modern, and versatile.', 'Shared signatures Ã¢â‚¬â€ balanced, modern, and versatile.', true, now()),
+  ('diffuser', 'diffuser', 'Diffusers', 'Home scents that linger with calm and clarity.', 'Home scents that linger with calm and clarity.', true, now()),
+  ('car-perfumes', 'car-perfumes', 'Car Perfumes', 'Compact scents for the drive.', 'Compact scents for the drive.', true, now()),
+  ('cosmetics', 'cosmetics', 'Body & Bath', 'Gels, lotions, and oils that carry the house signature.', 'Gels, lotions, and oils that carry the house signature.', true, now())
+on conflict (code) do update set
+  slug = excluded.slug,
+  name = coalesce(nullif(btrim(collections.name), ''), excluded.name),
+  tagline = coalesce(nullif(btrim(collections.tagline), ''), excluded.tagline),
+  description = coalesce(nullif(btrim(collections.description), ''), excluded.description),
+  is_active = true,
+  updated_at = now();
+
+notify pgrst, 'reload schema';
+
+-- <<< END docs/SUPABASE_COLLECTIONS_CODE_COLUMN.sql
+
+-- #############################################################################
+-- SECTION: DIFFUSER 200ML ONLY
+-- #############################################################################
+
+-- >>> BEGIN docs/SUPABASE_PRODUCTS_DIFFUSER_200ML.sql
+-- Diffusers sell as 200ml only (no 50ml on PDP).
+-- Safe to re-run.
+
+alter table public.products
+  add column if not exists price_200ml numeric(12,2);
+
+-- Diffuser products: default size 200ml; clear perfume-size prices
+update public.products
+set
+  default_size = '200ml',
+  price_200ml = coalesce(
+    price_200ml,
+    base_price,
+    price_50ml,
+    price_100ml,
+    price_30ml,
+    price
+  ),
+  price_30ml = null,
+  price_50ml = null,
+  price_100ml = null,
+  updated_at = now()
+where
+  lower(coalesce(collection_code, '')) in ('diffuser', 'diffusers')
+  or lower(coalesce(category, '')) like '%diffuser%'
+  or lower(coalesce(product_category, '')) like '%diffuser%';
+
+notify pgrst, 'reload schema';
+
+-- <<< END docs/SUPABASE_PRODUCTS_DIFFUSER_200ML.sql

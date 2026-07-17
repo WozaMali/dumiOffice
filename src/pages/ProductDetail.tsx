@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import StorefrontAuthDialog from "@/components/StorefrontAuthDialog";
 import { useState } from "react";
+import {
+  defaultSizeForProduct,
+  productSizeOptions,
+} from "@/lib/utils/product-sizes";
 
 const ProductDetail = () => {
   const { code } = useParams<{ code: string }>();
@@ -60,36 +64,17 @@ const ProductDetail = () => {
   }
 
   const displayName = product.name ?? product.product_name ?? "Untitled";
-  const sizeOptions = [
-    product.price_30ml != null && {
-      key: "30ml",
-      label: "30ml",
-      price: product.price_30ml!,
-    },
-    product.price_50ml != null && {
-      key: "50ml",
-      label: "50ml",
-      price: product.price_50ml!,
-    },
-    product.price_100ml != null && {
-      key: "100ml",
-      label: "100ml",
-      price: product.price_100ml!,
-    },
-  ].filter(Boolean) as { key: string; label: string; price: number }[];
+  const sizeOptions = productSizeOptions(product);
 
   const hasSizeOptions = sizeOptions.length > 0;
-  const [selectedSizeKey] = [hasSizeOptions ? sizeOptions[0].key : "default"];
-  const selectedSize = hasSizeOptions
-    ? sizeOptions.find((s) => s.key === selectedSizeKey) ?? sizeOptions[0]
-    : null;
+  const selectedSize = hasSizeOptions ? sizeOptions[0] : null;
 
   const price = hasSizeOptions
     ? selectedSize!.price
     : product.base_price ?? product.price ?? 0;
   const size = hasSizeOptions
     ? selectedSize!.label
-    : product.default_size ?? "50ml";
+    : defaultSizeForProduct(product);
 
   const handleCheckoutIntent = async () => {
     const { data } = await supabase.auth.getSession();

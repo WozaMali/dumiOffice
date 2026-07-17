@@ -12,6 +12,13 @@ export type ImageUploadPreset =
   | "popup"
   | "attachment";
 
+export type CompressedImageResult = {
+  file: File;
+  originalBytes: number;
+  outputBytes: number;
+  didCompress: boolean;
+};
+
 type PresetConfig = {
   maxWidth: number;
   maxHeight: number;
@@ -23,7 +30,8 @@ type PresetConfig = {
 
 const PRESETS: Record<ImageUploadPreset, PresetConfig> = {
   hero: { maxWidth: 1920, maxHeight: 1920, quality: 0.78, maxBytes: 450_000 },
-  product: { maxWidth: 1600, maxHeight: 1600, quality: 0.75, maxBytes: 350_000 },
+  // Fragrance Products main + gallery — tight for storefront cards/PDP
+  product: { maxWidth: 1400, maxHeight: 1400, quality: 0.74, maxBytes: 280_000 },
   collection: { maxWidth: 1200, maxHeight: 1200, quality: 0.75, maxBytes: 280_000 },
   bundle: { maxWidth: 1600, maxHeight: 1000, quality: 0.76, maxBytes: 320_000 },
   personalisation: { maxWidth: 1000, maxHeight: 1400, quality: 0.78, maxBytes: 250_000 },
@@ -31,7 +39,7 @@ const PRESETS: Record<ImageUploadPreset, PresetConfig> = {
   attachment: { maxWidth: 1600, maxHeight: 1600, quality: 0.72, maxBytes: 400_000 },
 };
 
-const MIN_QUALITY = 0.55;
+const MIN_QUALITY = 0.5;
 const QUALITY_STEP = 0.06;
 
 function isCompressibleImage(file: File): boolean {
@@ -91,6 +99,23 @@ function replaceExtension(name: string, ext: string): string {
   return `${safe}${ext}`;
 }
 
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function compressionToastMessage(
+  label: string,
+  result: Pick<CompressedImageResult, "originalBytes" | "outputBytes" | "didCompress">,
+): string {
+  if (!result.didCompress || result.outputBytes >= result.originalBytes) {
+    return `${label} uploaded (${formatBytes(result.outputBytes)}).`;
+  }
+  return `${label} uploaded — compressed ${formatBytes(result.originalBytes)} → ${formatBytes(result.outputBytes)}.`;
+}
+
 /**
  * Compress an image for Storage upload. Non-images / GIF / SVG are returned unchanged.
  * Prefer WebP; fall back to JPEG when the browser cannot encode WebP.
@@ -99,14 +124,26 @@ export async function compressImageForUpload(
   file: File,
   preset: ImageUploadPreset = "product",
 ): Promise<File> {
-  if (!isCompressibleImage(file)) return file;
+  const result = await compressImageForUploadDetailed(file, preset);
+  return result.file;
+}
+
+/** Same as {@link compressImageForUpload} but includes size stats for UI feedback. */
+export async function compressImageForUploadDetailed(
+  file: File,
+  preset: ImageUploadPreset = "product",
+): Promise<CompressedImageResult> {
+  const originalBytes = file.size;
+  if (!isCompressibleImage(file)) {
+    return { file, originalBytes, outputBytes: file.size, didCompress: false };
+  }
 
   const config = PRESETS[preset];
   let img: HTMLImageElement;
   try {
     img = await loadImage(file);
   } catch {
-    return file;
+    return { file, originalBytes, outputBytes: file.size, didCompress: false };
   }
 
   const scale = Math.min(
@@ -121,8 +158,11 @@ export async function compressImageForUpload(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return file;
+  if (!ctx) {
+    return { file, originalBytes, outputBytes: file.size, didCompress: false };
+  }
 
+  // White matte so transparent PNGs don't get a black WebP background
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(img, 0, 0, width, height);
@@ -142,15 +182,24 @@ export async function compressImageForUpload(
     quality -= QUALITY_STEP;
   }
 
-  if (!best) return file;
+  if (!best) {
+    return { file, originalBytes, outputBytes: file.size, didCompress: false };
+  }
 
   // Keep original only when it is already smaller (rare for phone photos)
   if (best.size >= file.size * 0.95 && file.size <= config.maxBytes) {
-    return file;
+    return { file, originalBytes, outputBytes: file.size, didCompress: false };
   }
 
-  return new File([best], replaceExtension(file.name, ext), {
+  const out = new File([best], replaceExtension(file.name, ext), {
     type: mime,
     lastModified: Date.now(),
   });
+
+  return {
+    file: out,
+    originalBytes,
+    outputBytes: out.size,
+    didCompress: true,
+  };
 }

@@ -69,6 +69,17 @@ After the shopper picks a category on step 1, use **one** of these columns:
 
 Fallback if a per-category column is null: legacy `label_top_pct`, `label_left_pct`, `label_width_pct`.
 
+### Label name font size (keep text inside the bottle)
+
+As the shopper types a longer name, **shrink the font** so it never extends past the label width box (`label_width_pct_*`).
+
+Office preview uses:
+
+1. Character estimate: `size = clamp(8, max * ideal / length, max)` — perfume `max≈22`, `ideal≈9`; **Diffuser** uses tighter `max≈18`, `ideal≈7` because jars are narrower
+2. Then measure-to-fit: reduce `font-size` until `scrollWidth <=` the label box width (`white-space: nowrap`). Character estimate is always applied as a ceiling so Diffuser cannot stay oversized when the width % box is too wide.
+
+Shared helpers (copy or mirror in the main app): `personalisationLabelFontSizePx`, `fitLabelFontSizeToContainer` in `src/lib/utils/personalisation.ts`.
+
 Run `docs/SUPABASE_PERSONALISATION_LABEL_POSITIONS.sql` once to add these columns on existing databases.
 
 **Fallback** if the category column is empty: `preview_image_url` (legacy single image).

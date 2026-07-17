@@ -94,6 +94,8 @@ export interface Product {
   price_30ml?: number | null;
   price_50ml?: number | null;
   price_100ml?: number | null;
+  /** Diffuser line — only size offered on storefront */
+  price_200ml?: number | null;
   cost?: number;
   stock_on_hand: number;
   stock_reserved?: number;

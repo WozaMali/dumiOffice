@@ -74,6 +74,68 @@ function formatScentProductOptionLabel(p: ScentProduct): string {
   return label;
 }
 
+/** Deduplicate catalog rows so dropdowns never list the same product twice. */
+function uniqueCatalogByKey<T>(items: T[], keyFn: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function packagingOptionKey(p: {
+  name?: string | null;
+  code?: string | null;
+  ml?: number | string | null;
+  colour?: string | null;
+  shape?: string | null;
+  liters?: number | string | null;
+}): string {
+  return [
+    (p.name || "").trim().toLowerCase(),
+    (p.code || "").trim().toLowerCase(),
+    p.ml != null && String(p.ml).trim() !== "" ? String(p.ml).trim() : "",
+    p.liters != null && String(p.liters).trim() !== "" ? String(p.liters).trim() : "",
+    (p.colour || "").trim().toLowerCase(),
+    (p.shape || "").trim().toLowerCase(),
+  ].join("|");
+}
+
+function formatBottleOptionLabel(p: {
+  name: string;
+  code?: string | null;
+  ml?: number | null;
+  colour?: string | null;
+}): string {
+  const parts = [p.name.trim() || "Bottle"];
+  if (p.code) parts.push(p.code);
+  if (p.ml != null) parts.push(`${p.ml}ml`);
+  if (p.colour) parts.push(p.colour);
+  return parts.join(" · ");
+}
+
+function formatPumpCapOptionLabel(p: {
+  name: string;
+  code?: string | null;
+  ml?: number | null;
+  colour?: string | null;
+}): string {
+  return formatBottleOptionLabel(p);
+}
+
+function formatEthanolOptionLabel(p: {
+  name: string;
+  liters?: number | null;
+}): string {
+  const parts = [p.name.trim() || "Ethanol"];
+  if (p.liters != null) parts.push(`${p.liters}L`);
+  return parts.join(" · ");
+}
+
 const emptyRow: ScentRow = {
   brand: "Dumi Essence",
   item: "",
@@ -181,11 +243,6 @@ const OilsPage = () => {
   const [editingProformaId, setEditingProformaId] = useState<string | null>(null);
   /** Prevents re-hydrating the editor multiple times for the same pro-forma id. */
   const proformaEditHydratedForIdRef = useRef<string | null>(null);
-  /** After saving an edit, skip one pristine-catalog autofill per packaging table (avoids blowing up the form). */
-  const skipBottleCatalogFillOnceRef = useRef(false);
-  const skipPumpCatalogFillOnceRef = useRef(false);
-  const skipCapCatalogFillOnceRef = useRef(false);
-  const skipEthanolCatalogFillOnceRef = useRef(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [proformaDate, setProformaDate] = useState(
@@ -250,6 +307,23 @@ const OilsPage = () => {
     queryKey: ["ethanolProducts"],
     queryFn: fragranceApi.listEthanolProducts,
   });
+
+  const uniqueBottleProducts = useMemo(
+    () => uniqueCatalogByKey(bottleProducts, packagingOptionKey),
+    [bottleProducts],
+  );
+  const uniquePumpProducts = useMemo(
+    () => uniqueCatalogByKey(pumpProducts, packagingOptionKey),
+    [pumpProducts],
+  );
+  const uniqueCapProducts = useMemo(
+    () => uniqueCatalogByKey(capProducts, packagingOptionKey),
+    [capProducts],
+  );
+  const uniqueEthanolProducts = useMemo(
+    () => uniqueCatalogByKey(ethanolProducts, packagingOptionKey),
+    [ethanolProducts],
+  );
 
   useEffect(() => {
     const loadRole = async () => {
@@ -504,121 +578,6 @@ const OilsPage = () => {
           ],
     );
   }, [scentProducts, editingProformaId]);
-
-  useEffect(() => {
-    if (bottleProducts.length === 0) return;
-    if (editingProformaId) return;
-    setBottles((prev) => {
-      if (skipBottleCatalogFillOnceRef.current) {
-        skipBottleCatalogFillOnceRef.current = false;
-        return prev;
-      }
-      const isPristine =
-        prev.length === 1 &&
-        !prev[0].id &&
-        !prev[0].name &&
-        !prev[0].code &&
-        !prev[0].colour &&
-        !prev[0].shape &&
-        !prev[0].price &&
-        !prev[0].qty;
-      if (!isPristine) return prev;
-      return bottleProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        ml: p.ml?.toString() ?? "",
-        code: p.code ?? "",
-        colour: p.colour ?? "",
-        shape: p.shape ?? "",
-        price: p.price?.toString() ?? "",
-        qty: "",
-      }));
-    });
-  }, [bottleProducts, editingProformaId]);
-
-  useEffect(() => {
-    if (pumpProducts.length === 0) return;
-    if (editingProformaId) return;
-    setPumps((prev) => {
-      if (skipPumpCatalogFillOnceRef.current) {
-        skipPumpCatalogFillOnceRef.current = false;
-        return prev;
-      }
-      const isPristine =
-        prev.length === 1 &&
-        !prev[0].id &&
-        !prev[0].name &&
-        !prev[0].code &&
-        !prev[0].colour &&
-        !prev[0].price &&
-        !prev[0].qty;
-      if (!isPristine) return prev;
-      return pumpProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        ml: p.ml?.toString() ?? "",
-        code: p.code ?? "",
-        colour: p.colour ?? "",
-        price: p.price?.toString() ?? "",
-        qty: "",
-      }));
-    });
-  }, [pumpProducts, editingProformaId]);
-
-  useEffect(() => {
-    if (capProducts.length === 0) return;
-    if (editingProformaId) return;
-    setCaps((prev) => {
-      if (skipCapCatalogFillOnceRef.current) {
-        skipCapCatalogFillOnceRef.current = false;
-        return prev;
-      }
-      const isPristine =
-        prev.length === 1 &&
-        !prev[0].id &&
-        !prev[0].name &&
-        !prev[0].code &&
-        !prev[0].colour &&
-        !prev[0].price &&
-        !prev[0].qty;
-      if (!isPristine) return prev;
-      return capProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        ml: p.ml?.toString() ?? "",
-        code: p.code ?? "",
-        colour: p.colour ?? "",
-        price: p.price?.toString() ?? "",
-        qty: "",
-      }));
-    });
-  }, [capProducts, editingProformaId]);
-
-  useEffect(() => {
-    if (ethanolProducts.length === 0) return;
-    if (editingProformaId) return;
-    setEthanolRows((prev) => {
-      if (skipEthanolCatalogFillOnceRef.current) {
-        skipEthanolCatalogFillOnceRef.current = false;
-        return prev;
-      }
-      const isPristine =
-        prev.length === 1 &&
-        !prev[0].id &&
-        !prev[0].name &&
-        !prev[0].liters &&
-        !prev[0].price &&
-        !prev[0].qty;
-      if (!isPristine) return prev;
-      return ethanolProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        liters: p.liters?.toString() ?? "",
-        price: p.price?.toString() ?? "",
-        qty: "",
-      }));
-    });
-  }, [ethanolProducts, editingProformaId]);
 
   const saveScentProductsMutation = useMutation({
     mutationFn: async (rows: ScentRow[]) => {
@@ -3377,6 +3336,14 @@ const OilsPage = () => {
                             .toLowerCase()}|${p.item.trim().toLowerCase()}`;
                           if (seenKeys.has(key)) return null;
                           if (!matchesFilter(p)) return null;
+                          // Hide products already chosen on another line (keep current row’s choice).
+                          const takenElsewhere = proFormaRows.some(
+                            (r, ri) =>
+                              ri !== index &&
+                              r.productIndex !== null &&
+                              r.productIndex === i,
+                          );
+                          if (takenElsewhere) return null;
                           seenKeys.add(key);
                           return (
                             <option key={p.id} value={i}>
@@ -3472,7 +3439,8 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={addBottleRow}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            disabled={uniqueBottleProducts.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="h-3.5 w-3.5" />
             Add bottle
@@ -3529,12 +3497,22 @@ const OilsPage = () => {
                         const selectedId = e.target.value;
                         const product = bottleProducts.find((p) => p.id === selectedId);
                         if (!product) {
-                          updateBottle(index, "name", "");
-                          updateBottle(index, "ml", "");
-                          updateBottle(index, "code", "");
-                          updateBottle(index, "colour", "");
-                          updateBottle(index, "shape", "");
-                          updateBottle(index, "price", "");
+                          setBottles((prev) =>
+                            prev.map((b, i) =>
+                              i === index
+                                ? {
+                                    ...b,
+                                    id: undefined,
+                                    name: "",
+                                    ml: "",
+                                    code: "",
+                                    colour: "",
+                                    shape: "",
+                                    price: "",
+                                  }
+                                : b,
+                            ),
+                          );
                           return;
                         }
                         setBottles((prev) =>
@@ -3556,11 +3534,18 @@ const OilsPage = () => {
                       }}
                     >
                       <option value="">Select bottle…</option>
-                      {bottleProducts.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
+                      {uniqueBottleProducts
+                        .filter((p) => {
+                          if (p.id === row.id) return true;
+                          return !bottles.some(
+                            (b, i) => i !== index && b.id === p.id,
+                          );
+                        })
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {formatBottleOptionLabel(p)}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   <td className="px-3 py-2 border-b border-border/40">
@@ -3643,7 +3628,8 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={addEthanolRow}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            disabled={uniqueEthanolProducts.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="h-3.5 w-3.5" />
             Add ethanol
@@ -3678,12 +3664,53 @@ const OilsPage = () => {
                   className={index % 2 === 0 ? "bg-background" : "bg-muted/40"}
                 >
                   <td className="px-3 py-2 border-b border-border/40">
-                    <input
-                      className="w-full bg-transparent border border-input rounded px-2 py-1 text-xs"
-                      placeholder="Name"
-                      value={row.name}
-                      onChange={(e) => updateEthanol(index, "name", e.target.value)}
-                    />
+                    <select
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      value={row.id ?? ""}
+                      onChange={(e) => {
+                        const selectedId = e.target.value;
+                        const product = ethanolProducts.find((p) => p.id === selectedId);
+                        if (!product) {
+                          setEthanolRows((prev) =>
+                            prev.map((r, i) =>
+                              i === index
+                                ? { id: undefined, name: "", liters: "", price: "", qty: r.qty }
+                                : r,
+                            ),
+                          );
+                          return;
+                        }
+                        setEthanolRows((prev) =>
+                          prev.map((r, i) =>
+                            i === index
+                              ? {
+                                  ...r,
+                                  id: product.id,
+                                  name: product.name,
+                                  liters:
+                                    product.liters != null ? String(product.liters) : "",
+                                  price:
+                                    product.price != null ? String(product.price) : "",
+                                }
+                              : r,
+                          ),
+                        );
+                      }}
+                    >
+                      <option value="">Select ethanol…</option>
+                      {uniqueEthanolProducts
+                        .filter((p) => {
+                          if (p.id === row.id) return true;
+                          return !ethanolRows.some(
+                            (b, i) => i !== index && b.id === p.id,
+                          );
+                        })
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {formatEthanolOptionLabel(p)}
+                          </option>
+                        ))}
+                    </select>
                   </td>
                   <td className="px-3 py-2 border-b border-border/40">
                     <input
@@ -3733,7 +3760,8 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={addPumpRow}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            disabled={uniquePumpProducts.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="h-3.5 w-3.5" />
             Add pump
@@ -3781,11 +3809,21 @@ const OilsPage = () => {
                         const selectedId = e.target.value;
                         const product = pumpProducts.find((p) => p.id === selectedId);
                         if (!product) {
-                          updatePump(index, "name", "");
-                          updatePump(index, "ml", "");
-                          updatePump(index, "code", "");
-                          updatePump(index, "colour", "");
-                          updatePump(index, "price", "");
+                          setPumps((prev) =>
+                            prev.map((p, i) =>
+                              i === index
+                                ? {
+                                    ...p,
+                                    id: undefined,
+                                    name: "",
+                                    ml: "",
+                                    code: "",
+                                    colour: "",
+                                    price: "",
+                                  }
+                                : p,
+                            ),
+                          );
                           return;
                         }
                         setPumps((prev) =>
@@ -3806,11 +3844,18 @@ const OilsPage = () => {
                       }}
                     >
                       <option value="">Select pump…</option>
-                      {pumpProducts.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
+                      {uniquePumpProducts
+                        .filter((p) => {
+                          if (p.id === row.id) return true;
+                          return !pumps.some(
+                            (b, i) => i !== index && b.id === p.id,
+                          );
+                        })
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {formatPumpCapOptionLabel(p)}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   <td className="px-3 py-2 border-b border-border/40">
@@ -3883,7 +3928,8 @@ const OilsPage = () => {
           <button
             type="button"
             onClick={addCapRow}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            disabled={uniqueCapProducts.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="h-3.5 w-3.5" />
             Add cap
@@ -3931,11 +3977,21 @@ const OilsPage = () => {
                         const selectedId = e.target.value;
                         const product = capProducts.find((p) => p.id === selectedId);
                         if (!product) {
-                          updateCap(index, "name", "");
-                          updateCap(index, "ml", "");
-                          updateCap(index, "code", "");
-                          updateCap(index, "colour", "");
-                          updateCap(index, "price", "");
+                          setCaps((prev) =>
+                            prev.map((c, i) =>
+                              i === index
+                                ? {
+                                    ...c,
+                                    id: undefined,
+                                    name: "",
+                                    ml: "",
+                                    code: "",
+                                    colour: "",
+                                    price: "",
+                                  }
+                                : c,
+                            ),
+                          );
                           return;
                         }
                         setCaps((prev) =>
@@ -3956,11 +4012,18 @@ const OilsPage = () => {
                       }}
                     >
                       <option value="">Select cap…</option>
-                      {capProducts.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
+                      {uniqueCapProducts
+                        .filter((p) => {
+                          if (p.id === row.id) return true;
+                          return !caps.some(
+                            (b, i) => i !== index && b.id === p.id,
+                          );
+                        })
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {formatPumpCapOptionLabel(p)}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   <td className="px-3 py-2 border-b border-border/40">

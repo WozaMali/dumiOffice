@@ -169,7 +169,28 @@ CREATE TABLE IF NOT EXISTS products (
   
   -- Organization
   collection TEXT, -- Winter Stories, Summer Breeze, etc
+  collection_code TEXT, -- mens | womens | unisex | diffuser | car-perfumes | cosmetics
   tags TEXT[], -- ['bestseller', 'new-arrival', 'limited-edition']
+
+  -- Fragrance metadata (Inventory ↔ Content Fragrance products)
+  brand TEXT,
+  item TEXT,
+  inspired_by TEXT,
+  designer TEXT,
+  code TEXT, -- storefront URL code
+  name TEXT, -- storefront display name (mirrors product_name)
+  category TEXT,
+  base_price DECIMAL(10,2),
+  price_30ml DECIMAL(10,2),
+  price_50ml DECIMAL(10,2),
+  price_100ml DECIMAL(10,2),
+  price_200ml DECIMAL(10,2),
+  long_description TEXT,
+  default_size TEXT,
+  primary_image_path TEXT,
+  is_bestseller BOOLEAN DEFAULT false,
+  is_new BOOLEAN DEFAULT false,
+  reassurance_copy TEXT,
   
   -- Status
   is_active BOOLEAN DEFAULT true,
@@ -212,6 +233,50 @@ CREATE TABLE IF NOT EXISTS product_variants (
   -- Metadata
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================
+-- PRODUCT NOTES (fragrance pyramid) + GALLERY IMAGES
+-- ============================================
+CREATE TABLE IF NOT EXISTS product_notes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  level TEXT NOT NULL CHECK (level IN ('top', 'middle', 'base')),
+  note TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_notes_product_id ON product_notes(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_notes_level_position ON product_notes(product_id, level, position);
+
+CREATE TABLE IF NOT EXISTS product_images (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'gallery',
+  path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_images_product_id ON product_images(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_images_sort ON product_images(product_id, sort_order);
+
+-- ============================================
+-- HOME BESTSELLERS (storefront home strip)
+-- ============================================
+CREATE TABLE IF NOT EXISTS home_bestsellers (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  badge_label TEXT DEFAULT 'Bestseller',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_home_bestsellers_sort ON home_bestsellers(sort_order, created_at);
+CREATE INDEX IF NOT EXISTS idx_home_bestsellers_active ON home_bestsellers(is_active);
 
 -- ============================================
 -- CARTS TABLE (Main App)
@@ -539,11 +604,15 @@ CREATE TABLE IF NOT EXISTS collections (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   
   -- Collection details
+  code TEXT UNIQUE, -- mens | womens | unisex | diffuser | car-perfumes | cosmetics
   name TEXT NOT NULL,
   slug TEXT UNIQUE NOT NULL,
+  tagline TEXT,
   description TEXT,
   
-  -- Media
+  -- Media (Office hero_image_url; storefront often reads `image`)
+  hero_image_url TEXT,
+  image TEXT,
   image_url TEXT,
   
   -- SEO
@@ -646,6 +715,8 @@ CREATE INDEX IF NOT EXISTS idx_products_category ON products(product_category);
 CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
 CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active);
 CREATE INDEX IF NOT EXISTS idx_products_is_featured ON products(is_featured);
+CREATE INDEX IF NOT EXISTS idx_products_collection_code ON products(collection_code);
+CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand);
 
 -- Orders
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
@@ -763,72 +834,10 @@ CREATE POLICY "Allow all operations" ON activity_log FOR ALL USING (true);
 CREATE POLICY "Allow all operations" ON profiles FOR ALL USING (true);
 
 -- ============================================
--- SAMPLE DATA
+-- SAMPLE DATA (disabled for production installs)
 -- ============================================
-
--- Insert sample products (Dumi Essence catalog)
-INSERT INTO products (sku, product_name, product_category, product_type, price, cost, stock_on_hand, stock_threshold, description, short_description, slug, is_featured) VALUES
-('DE-OR50', 'Oud Royal 50ml', 'Perfume', 'EDP 50ml', 1250.00, 450.00, 3, 10, 
-  'A luxurious blend of rare oud wood and precious spices, creating an opulent and sophisticated fragrance that commands attention.',
-  'Luxurious oud wood with precious spices',
-  'oud-royal-50ml', true),
-('DE-OR100', 'Oud Royal 100ml', 'Perfume', 'EDP 100ml', 2400.00, 850.00, 18, 15,
-  'The signature Oud Royal scent in a generous 100ml bottle. Perfect for those who appreciate the finest in luxury fragrances.',
-  'Signature luxury oud fragrance',
-  'oud-royal-100ml', true),
-('DE-RN100', 'Rose Noir 100ml', 'Perfume', 'EDP 100ml', 890.00, 320.00, 5, 15,
-  'Dark roses meet mysterious spices in this captivating evening fragrance. Elegant, sensual, and unforgettable.',
-  'Dark roses with mysterious spices',
-  'rose-noir-100ml', false),
-('DE-AVS', 'Amber Velvet Set', 'Perfume', 'Gift Set', 2100.00, 750.00, 24, 10,
-  'A complete fragrance experience featuring Amber Velvet EDP 50ml, body lotion, and shower gel. Beautifully packaged for gifting.',
-  'Complete amber fragrance gift set',
-  'amber-velvet-set', true),
-('DE-JD30', 'Jasmine Dreams 30ml', 'Perfume', 'EDP 30ml', 650.00, 230.00, 32, 8,
-  'Fresh jasmine petals dance with citrus notes in this light, romantic fragrance. Perfect for everyday wear.',
-  'Fresh jasmine with citrus notes',
-  'jasmine-dreams-30ml', false),
-('DE-MI50', 'Musk Intense 50ml', 'Perfume', 'EDP 50ml', 980.00, 350.00, 14, 12,
-  'Pure, sensual musk enhanced with warm amber. A timeless fragrance that lingers beautifully on the skin.',
-  'Pure sensual musk with amber',
-  'musk-intense-50ml', false),
-('DE-VS30', 'Vanilla Silk 30ml', 'Perfume', 'EDP 30ml', 550.00, 195.00, 2, 8,
-  'Creamy vanilla wrapped in soft silk notes. Comforting, sweet, and utterly addictive.',
-  'Creamy vanilla with silk notes',
-  'vanilla-silk-30ml', false),
-('DE-OR-RD', 'Oud Royal Reed Diffuser', 'Diffuser', 'Reed Diffuser', 450.00, 160.00, 12, 5,
-  'Bring the luxury of Oud Royal into your space. Long-lasting reed diffuser fills your home with opulent fragrance for up to 3 months.',
-  'Luxury oud home fragrance',
-  'oud-royal-reed-diffuser', false),
-('DE-RN-RD', 'Rose Noir Reed Diffuser', 'Diffuser', 'Reed Diffuser', 420.00, 150.00, 8, 5,
-  'Transform your space with the mysterious elegance of Rose Noir. Lasts up to 3 months.',
-  'Dark rose home fragrance',
-  'rose-noir-reed-diffuser', false),
-('DE-OR-CAR', 'Oud Royal Car Diffuser', 'Car Perfume', 'Vent Clip', 180.00, 65.00, 25, 10,
-  'Take the luxury of Oud Royal on the road. Easy vent clip design provides weeks of elegant fragrance.',
-  'Luxury car fragrance',
-  'oud-royal-car-diffuser', false)
-ON CONFLICT (sku) DO NOTHING;
-
--- Insert sample customers
-INSERT INTO customers (id, customer_name, customer_email, customer_phone, customer_type, lifetime_value, total_orders, first_order_date, last_order_date, marketing_consent, email_consent) VALUES
-('a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Amara Nkosi', 'amara@example.com', '+27 82 000 0001', 'retail', 1250.00, 1, '2026-02-27', '2026-02-27', true, true),
-('b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Lindiwe Mokoena', 'lindiwe@example.com', '+27 72 000 0002', 'retail', 890.00, 1, '2026-02-26', '2026-02-26', true, true),
-('c3d4e5f6-a7b8-6c7d-0e1f-2a3b4c5d6e7f', 'Thabo Khumalo', 'thabo@example.com', '+27 73 000 0003', 'vip', 2100.00, 1, '2026-02-25', '2026-02-25', true, true)
-ON CONFLICT (id) DO NOTHING;
-
--- Insert sample addresses
-INSERT INTO addresses (customer_id, address_type, address_line, suburb, city, postal_code, is_default) VALUES
-('a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'delivery', '12 Rosewood Lane', 'Sandton', 'Johannesburg', '2196', true),
-('b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'delivery', '8 Jacaranda Street', 'Hatfield', 'Pretoria', '0083', true),
-('c3d4e5f6-a7b8-6c7d-0e1f-2a3b4c5d6e7f', 'delivery', 'Unit 5, Parkview Lofts', 'Rosebank', 'Johannesburg', '2193', true);
-
--- Insert sample collections
-INSERT INTO collections (name, slug, description, is_active, published_at) VALUES
-('Winter Stories', 'winter-stories', 'Warm, rich fragrances perfect for the colder months. Featuring oud, amber, and spice notes.', true, NOW()),
-('Summer Breeze', 'summer-breeze', 'Light, fresh scents that capture the essence of summer. Citrus, jasmine, and aquatic notes.', true, NOW()),
-('Gift Sets', 'gift-sets', 'Beautifully curated fragrance gift sets perfect for any occasion.', true, NOW())
-ON CONFLICT (slug) DO NOTHING;
+-- Demo products/customers were removed so Inventory and Clients start empty.
+-- Add real catalog and clients from the Office app.
 
 -- ============================================
 -- FUNCTIONS & TRIGGERS

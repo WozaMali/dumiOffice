@@ -202,3 +202,93 @@ export function getCategoryPreviewImageUrl(
   const path = getCategoryPreviewImage(settings, category);
   return resolvePersonalisationPreviewImageUrl(path);
 }
+
+/** Default max font size (px) for short names on the bottle label preview. */
+export const PERSONALISATION_LABEL_FONT_MAX_PX = 22;
+/** Floor so long names stay readable but still fit the bottle. */
+export const PERSONALISATION_LABEL_FONT_MIN_PX = 8;
+/** Characters that still look good at max size (script fonts are wide). */
+export const PERSONALISATION_LABEL_IDEAL_CHARS = 9;
+
+/**
+ * Estimate label font size from character count so longer names shrink
+ * instead of spilling past the bottle. Prefer {@link fitLabelFontSizeToContainer}
+ * when a DOM node is available for exact fit.
+ */
+export function personalisationLabelFontSizePx(
+  text: string,
+  options?: {
+    maxPx?: number;
+    minPx?: number;
+    idealCharsAtMax?: number;
+  },
+): number {
+  const maxPx = options?.maxPx ?? PERSONALISATION_LABEL_FONT_MAX_PX;
+  const minPx = options?.minPx ?? PERSONALISATION_LABEL_FONT_MIN_PX;
+  const idealCharsAtMax = options?.idealCharsAtMax ?? PERSONALISATION_LABEL_IDEAL_CHARS;
+  const cleaned = text.trim() || " ";
+  const len = Array.from(cleaned).length;
+  if (len <= idealCharsAtMax) return maxPx;
+  const scaled = (maxPx * idealCharsAtMax) / len;
+  return Math.max(minPx, Math.min(maxPx, Math.round(scaled * 10) / 10));
+}
+
+/**
+ * Shrink `textEl` font-size until its width fits `containerEl`.
+ * Always caps with {@link personalisationLabelFontSizePx} first so long names
+ * shrink even when the label box is overly wide (common on Diffuser).
+ * Returns the final size in px. Mutates `textEl.style.fontSize`.
+ */
+export function fitLabelFontSizeToContainer(
+  textEl: HTMLElement,
+  containerEl: HTMLElement,
+  options?: {
+    maxPx?: number;
+    minPx?: number;
+    step?: number;
+    idealCharsAtMax?: number;
+  },
+): number {
+  const maxPx = options?.maxPx ?? PERSONALISATION_LABEL_FONT_MAX_PX;
+  const minPx = options?.minPx ?? PERSONALISATION_LABEL_FONT_MIN_PX;
+  const step = options?.step ?? 0.5;
+  const text = textEl.textContent || "";
+  // Character ceiling always applies (Diffuser jars are often narrower than the % box).
+  const charCap = personalisationLabelFontSizePx(text, {
+    maxPx,
+    minPx,
+    idealCharsAtMax: options?.idealCharsAtMax,
+  });
+  const width = containerEl.clientWidth;
+  if (width <= 0) return charCap;
+
+  let size = charCap;
+  textEl.style.whiteSpace = "nowrap";
+  textEl.style.display = "inline-block";
+  textEl.style.maxWidth = "100%";
+  textEl.style.fontSize = `${size}px`;
+
+  while (size > minPx && textEl.scrollWidth > width) {
+    size = Math.round((size - step) * 10) / 10;
+    textEl.style.fontSize = `${size}px`;
+  }
+  return Math.max(minPx, size);
+}
+
+/** Per-category defaults — Diffuser vessels are narrower than perfume bottles. */
+export function personalisationLabelFontOptionsForCategory(
+  category: PersonalisationCategoryCode,
+): { maxPx: number; minPx: number; idealCharsAtMax: number } {
+  if (category === "diffuser") {
+    return {
+      maxPx: 18,
+      minPx: PERSONALISATION_LABEL_FONT_MIN_PX,
+      idealCharsAtMax: 7,
+    };
+  }
+  return {
+    maxPx: PERSONALISATION_LABEL_FONT_MAX_PX,
+    minPx: PERSONALISATION_LABEL_FONT_MIN_PX,
+    idealCharsAtMax: PERSONALISATION_LABEL_IDEAL_CHARS,
+  };
+}

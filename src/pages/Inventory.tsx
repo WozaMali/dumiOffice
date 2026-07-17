@@ -18,6 +18,59 @@ import { downloadCSV, generateProductsCSV } from "@/lib/utils/bulk-actions";
 import { generateInventoryPDF } from "@/lib/utils/inventory-pdf";
 import { supabase } from "@/lib/supabase";
 
+/** Line codes that map into Content → Fragrance products sections. */
+const PERFUME_LINE_OPTIONS = [
+  { code: "mens", label: "Men's" },
+  { code: "womens", label: "Women's" },
+  { code: "unisex", label: "Unisex" },
+] as const;
+
+/** Listed oils store line in `item` (Men / Women / Unisex / Diffuser) and scent name in `brand`. */
+function scentLineKey(scent: ScentProduct): string {
+  const raw = (scent.item || "").trim().toLowerCase();
+  if (raw.startsWith("men")) return "mens";
+  if (raw.startsWith("women") || raw.startsWith("wom")) return "womens";
+  if (raw.startsWith("uni")) return "unisex";
+  if (raw.includes("diffuser")) return "diffuser";
+  if (raw.includes("car")) return "car-perfumes";
+  return raw;
+}
+
+function scentMatchesInventoryCategory(
+  scent: ScentProduct,
+  category: ProductCategory,
+  perfumeLineCode?: string,
+): boolean {
+  const line = scentLineKey(scent);
+  const type = (scent.scent_type || "").toLowerCase();
+  const hay = [scent.brand, scent.item, scent.inspired_by, scent.designer, scent.scent_type]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  switch (category) {
+    case "Diffuser":
+      return line === "diffuser" || type.includes("diffuser") || hay.includes("diffuser");
+    case "Car Perfume":
+      return line === "car-perfumes" || type.includes("car") || hay.includes("car");
+    case "Shower Gel":
+      return type.includes("gel") || hay.includes("shower");
+    case "Body Lotion":
+      return type.includes("lotion") || hay.includes("lotion");
+    case "Body Oil":
+      return (type.includes("oil") && !type.includes("essential")) || hay.includes("body oil");
+    case "Perfume": {
+      if (line === "diffuser" || line === "car-perfumes") return false;
+      if (perfumeLineCode === "mens" || perfumeLineCode === "womens" || perfumeLineCode === "unisex") {
+        return line === perfumeLineCode;
+      }
+      return line === "mens" || line === "womens" || line === "unisex" || !line;
+    }
+    default:
+      return true;
+  }
+}
+
 const Inventory = () => {
   const queryClient = useQueryClient();
   const { data: items = [], isLoading, error, refetch } = useQuery<Product[]>({
@@ -117,6 +170,7 @@ const Inventory = () => {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
   const [selectedScentId, setSelectedScentId] = useState<string>("");
+  const [scentSearch, setScentSearch] = useState("");
   const [form, setForm] = useState({
     product_name: "",
     brand: "",
@@ -124,6 +178,7 @@ const Inventory = () => {
     inspired_by: "",
     designer: "",
     product_category: "Perfume" as ProductCategory,
+    collection_code: "mens",
     product_type: "",
     sku: "",
     price: "0",
@@ -202,22 +257,83 @@ const Inventory = () => {
   }, [filteredItems, page, pageSize]);
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
 
+  const filteredScentOptions = useMemo(() => {
+    const term = scentSearch.trim().toLowerCase();
+    const seen = new Set<string>();
+    return scentProducts.filter((scent) => {
+      if (
+        !scentMatchesInventoryCategory(
+          scent,
+          form.product_category,
+          form.collection_code,
+        )
+      ) {
+        return false;
+      }
+      const key = `${(scent.brand || "").trim().toLowerCase()}|${(scent.item || "")
+        .trim()
+        .toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      if (!term) return true;
+      const hay = [
+        scent.brand,
+        scent.item,
+        scent.inspired_by,
+        scent.designer,
+        scent.scent_type,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(term);
+    });
+  }, [scentProducts, form.product_category, form.collection_code, scentSearch]);
+
+  const resolveCollectionCode = (category: ProductCategory, lineCode: string): string | undefined => {
+    const fromCategory = defaultCollectionCodeForCategory(category);
+    if (fromCategory) return fromCategory;
+    if (category === "Perfume") {
+      return lineCode === "womens" || lineCode === "unisex" || lineCode === "mens"
+        ? lineCode
+        : "mens";
+    }
+    return undefined;
+  };
+
   const handleChange = (field: keyof typeof form, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === "product_category") {
+        const category = value as ProductCategory;
+        const auto = defaultCollectionCodeForCategory(category);
+        if (auto) next.collection_code = auto;
+        else if (category === "Perfume" && !["mens", "womens", "unisex"].includes(prev.collection_code)) {
+          next.collection_code = "mens";
+        }
+        // Clear scent pick when category/line changes so list stays coherent
+        setSelectedScentId("");
+        setScentSearch("");
+      }
+      if (field === "collection_code") {
+        setSelectedScentId("");
+        setScentSearch("");
+      }
+      return next;
+    });
   };
 
   const generateSkuFromScent = (scent: ScentProduct): string => {
-    const brandPart =
+    // Oils: brand = scent name, item = line (Men/Women/…)
+    const namePart =
       (scent.brand || "DE")
-        .split(" ")
-        .map((p) => p[0])
-        .join("")
+        .replace(/[^A-Za-z0-9]/g, "")
         .toUpperCase()
-        .slice(0, 3) || "DE";
-    const itemPart =
-      (scent.item || "ITEM").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4) || "ITEM";
+        .slice(0, 6) || "SCENT";
+    const linePart =
+      (scent.item || "X").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 1) || "X";
     const random = Math.floor(100 + Math.random() * 900); // 100-999
-    return `DE-${brandPart}${itemPart}-${random}`;
+    return `DE-${namePart}${linePart}-${random}`;
   };
 
   const handleSelectScent = (scentId: string) => {
@@ -225,18 +341,27 @@ const Inventory = () => {
     if (!scentId) return;
     const scent = scentProducts.find((s) => s.id === scentId);
     if (!scent) return;
+    const line = scentLineKey(scent);
     setForm((prev) => ({
       ...prev,
+      // Inventory Brand column = scent name from Oils
       brand: scent.brand || prev.brand,
+      // Keep Oils line (Men/Women/Unisex) on product.item for parity with listed oils
       item: scent.item || prev.item,
       inspired_by: scent.inspired_by || prev.inspired_by,
       designer: scent.designer || prev.designer,
-      product_name: prev.product_name || scent.item || prev.product_name,
+      product_name: prev.product_name || scent.brand || prev.product_name,
+      collection_code:
+        line === "mens" || line === "womens" || line === "unisex"
+          ? line
+          : prev.collection_code,
       sku: prev.sku || generateSkuFromScent(scent),
     }));
   };
 
   const resetForm = () => {
+    setSelectedScentId("");
+    setScentSearch("");
     setForm({
       product_name: "",
       brand: "",
@@ -244,6 +369,7 @@ const Inventory = () => {
       inspired_by: "",
       designer: "",
       product_category: "Perfume",
+      collection_code: "mens",
       product_type: "",
       sku: "",
       price: "0",
@@ -255,6 +381,8 @@ const Inventory = () => {
 
   const openEdit = (product: Product) => {
     setEditingProduct(product);
+    setSelectedScentId("");
+    setScentSearch("");
     setForm({
       product_name: product.product_name,
       brand: product.brand || "",
@@ -262,6 +390,10 @@ const Inventory = () => {
       inspired_by: product.inspired_by || "",
       designer: product.designer || "",
       product_category: product.product_category,
+      collection_code:
+        product.collection_code ||
+        defaultCollectionCodeForCategory(product.product_category) ||
+        "mens",
       product_type: product.product_type || "",
       sku: product.sku,
       price: product.price.toString(),
@@ -332,10 +464,14 @@ const Inventory = () => {
     const threshold = Number(form.stock_threshold) || 0;
     const price = Number(form.price) || 0;
 
-    const collectionCode = defaultCollectionCodeForCategory(form.product_category);
+    const collectionCode = resolveCollectionCode(
+      form.product_category,
+      form.collection_code,
+    );
 
     const newItem: Partial<Product> = {
       product_name: form.product_name.trim(),
+      name: form.product_name.trim(),
       brand: form.brand.trim() || undefined,
       item: form.item.trim() || undefined,
       inspired_by: form.inspired_by.trim() || undefined,
@@ -344,6 +480,7 @@ const Inventory = () => {
       product_type: form.product_type.trim() || undefined,
       sku: form.sku.trim(),
       price,
+      base_price: price,
       stock_on_hand: stock,
       stock_threshold: threshold,
       description: form.description.trim() || undefined,
@@ -362,10 +499,14 @@ const Inventory = () => {
     const threshold = Number(form.stock_threshold) || 0;
     const price = Number(form.price) || 0;
 
-    const collectionCode = defaultCollectionCodeForCategory(form.product_category);
+    const collectionCode = resolveCollectionCode(
+      form.product_category,
+      form.collection_code,
+    );
 
     const updates: Partial<Product> = {
       product_name: form.product_name.trim(),
+      name: form.product_name.trim(),
       brand: form.brand.trim() || undefined,
       item: form.item.trim() || undefined,
       inspired_by: form.inspired_by.trim() || undefined,
@@ -374,6 +515,7 @@ const Inventory = () => {
       product_type: form.product_type.trim() || undefined,
       sku: form.sku.trim(),
       price,
+      base_price: price,
       stock_on_hand: stock,
       stock_threshold: threshold,
       description: form.description.trim() || undefined,
@@ -753,16 +895,23 @@ const Inventory = () => {
           </div>
         )}
 
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add product</DialogTitle>
-            <DialogDescription>Capture a new product with category, SKU and initial stock.</DialogDescription>
+            <DialogDescription>
+              Create stock that also appears under Content → Fragrance products (by category and line).
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAddProduct} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="product_name">DE Name *</Label>
-                <Input id="product_name" value={form.product_name} onChange={(e) => handleChange("product_name", e.target.value)} required />
+                <Input
+                  id="product_name"
+                  value={form.product_name}
+                  onChange={(e) => handleChange("product_name", e.target.value)}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="product_category">Category</Label>
@@ -770,7 +919,9 @@ const Inventory = () => {
                   id="product_category"
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={form.product_category}
-                  onChange={(e) => handleChange("product_category", e.target.value as ProductCategory)}
+                  onChange={(e) =>
+                    handleChange("product_category", e.target.value as ProductCategory)
+                  }
                 >
                   {PRODUCT_CATEGORY_OPTIONS.map((category) => (
                     <option key={category} value={category}>
@@ -780,55 +931,126 @@ const Inventory = () => {
                 </select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="scent_product">Use from Listed Products (Oils)</Label>
+
+            {form.product_category === "Perfume" && (
+              <div className="space-y-2">
+                <Label htmlFor="collection_code">Fragrance line</Label>
+                <select
+                  id="collection_code"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={form.collection_code}
+                  onChange={(e) => handleChange("collection_code", e.target.value)}
+                >
+                  {PERFUME_LINE_OPTIONS.map((line) => (
+                    <option key={line.code} value={line.code}>
+                      {line.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted-foreground">
+                  Places this SKU in Content → Fragrance products ({form.collection_code} line).
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+              <Label htmlFor="scent_search">Use from Listed Products (Oils)</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="scent_search"
+                  value={scentSearch}
+                  onChange={(e) => setScentSearch(e.target.value)}
+                  placeholder="Search scents by name, inspired by, designer…"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  onClick={() => {
+                    /* filter is live; button focuses the select for keyboard users */
+                    document.getElementById("scent_product")?.focus();
+                  }}
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  Search
+                </Button>
+              </div>
               <select
                 id="scent_product"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={selectedScentId}
                 onChange={(e) => handleSelectScent(e.target.value)}
               >
-                <option value="">Select fragrance (optional)</option>
-                {scentProducts.map((scent) => (
+                <option value="">
+                  {filteredScentOptions.length
+                    ? `Select fragrance (${filteredScentOptions.length} for ${form.product_category})…`
+                    : `No listed oils match ${form.product_category}`}
+                </option>
+                {filteredScentOptions.map((scent) => (
                   <option key={scent.id} value={scent.id}>
-                    {scent.brand} – {scent.item}
-                    {scent.inspired_by ? ` (${scent.inspired_by})` : ""}{" "}
-                    {scent.designer ? `- ${scent.designer}` : ""}
+                    {scent.brand}
+                    {scent.item ? ` · ${scent.item}` : ""}
+                    {scent.inspired_by ? ` · inspired by ${scent.inspired_by}` : ""}
+                    {scent.designer ? ` · ${scent.designer}` : ""}
                   </option>
                 ))}
               </select>
               <p className="text-[11px] text-muted-foreground">
-                This will fill Brand, Item, Inspired By, Designer and suggest a SKU, which you can still edit.
+                Fills DE Name, Brand, Inspired By, Designer and suggests a SKU from Oils listed
+                products
+                {form.product_category === "Perfume"
+                  ? ` for the ${form.collection_code} line`
+                  : ` for ${form.product_category}`}
+                .
               </p>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="brand">Brand</Label>
-                <Input id="brand" value={form.brand} onChange={(e) => handleChange("brand", e.target.value)} />
+                <Input
+                  id="brand"
+                  value={form.brand}
+                  onChange={(e) => handleChange("brand", e.target.value)}
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="item">Item</Label>
-                <Input id="item" value={form.item} onChange={(e) => handleChange("item", e.target.value)} />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="inspired_by">Inspired By</Label>
-                <Input id="inspired_by" value={form.inspired_by} onChange={(e) => handleChange("inspired_by", e.target.value)} />
+                <Input
+                  id="inspired_by"
+                  value={form.inspired_by}
+                  onChange={(e) => handleChange("inspired_by", e.target.value)}
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="designer">Designer</Label>
-                <Input id="designer" value={form.designer} onChange={(e) => handleChange("designer", e.target.value)} />
-              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="designer">Designer</Label>
+              <Input
+                id="designer"
+                value={form.designer}
+                onChange={(e) => handleChange("designer", e.target.value)}
+              />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="sku">SKU *</Label>
-                <Input id="sku" value={form.sku} onChange={(e) => handleChange("sku", e.target.value)} required />
+                <Input
+                  id="sku"
+                  value={form.sku}
+                  onChange={(e) => handleChange("sku", e.target.value)}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="product_type">Type / variant</Label>
-                <Input id="product_type" placeholder="e.g. EDP 50ml" value={form.product_type} onChange={(e) => handleChange("product_type", e.target.value)} />
+                <Input
+                  id="product_type"
+                  placeholder="e.g. EDP 50ml"
+                  value={form.product_type}
+                  onChange={(e) => handleChange("product_type", e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="price">Price (R)</Label>
@@ -875,16 +1097,23 @@ const Inventory = () => {
 
       {/* Edit product dialog */}
       <Dialog open={!!editingProduct} onOpenChange={(open) => !open && setEditingProduct(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit product</DialogTitle>
-            <DialogDescription>Update product details and stock thresholds.</DialogDescription>
+            <DialogDescription>
+              Update stock and fragrance metadata used by Content → Fragrance products.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleUpdateProduct} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit_product_name">DE Name *</Label>
-                <Input id="edit_product_name" value={form.product_name} onChange={(e) => handleChange("product_name", e.target.value)} required />
+                <Input
+                  id="edit_product_name"
+                  value={form.product_name}
+                  onChange={(e) => handleChange("product_name", e.target.value)}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit_product_category">Category</Label>
@@ -892,7 +1121,9 @@ const Inventory = () => {
                   id="edit_product_category"
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={form.product_category}
-                  onChange={(e) => handleChange("product_category", e.target.value as ProductCategory)}
+                  onChange={(e) =>
+                    handleChange("product_category", e.target.value as ProductCategory)
+                  }
                 >
                   {PRODUCT_CATEGORY_OPTIONS.map((category) => (
                     <option key={category} value={category}>
@@ -902,34 +1133,72 @@ const Inventory = () => {
                 </select>
               </div>
             </div>
+
+            {form.product_category === "Perfume" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit_collection_code">Fragrance line</Label>
+                <select
+                  id="edit_collection_code"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={
+                    ["mens", "womens", "unisex"].includes(form.collection_code)
+                      ? form.collection_code
+                      : "mens"
+                  }
+                  onChange={(e) => handleChange("collection_code", e.target.value)}
+                >
+                  {PERFUME_LINE_OPTIONS.map((line) => (
+                    <option key={line.code} value={line.code}>
+                      {line.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit_brand">Brand</Label>
-                <Input id="edit_brand" value={form.brand} onChange={(e) => handleChange("brand", e.target.value)} />
+                <Input
+                  id="edit_brand"
+                  value={form.brand}
+                  onChange={(e) => handleChange("brand", e.target.value)}
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_item">Item</Label>
-                <Input id="edit_item" value={form.item} onChange={(e) => handleChange("item", e.target.value)} />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit_inspired_by">Inspired By</Label>
-                <Input id="edit_inspired_by" value={form.inspired_by} onChange={(e) => handleChange("inspired_by", e.target.value)} />
+                <Input
+                  id="edit_inspired_by"
+                  value={form.inspired_by}
+                  onChange={(e) => handleChange("inspired_by", e.target.value)}
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_designer">Designer</Label>
-                <Input id="edit_designer" value={form.designer} onChange={(e) => handleChange("designer", e.target.value)} />
-              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_designer">Designer</Label>
+              <Input
+                id="edit_designer"
+                value={form.designer}
+                onChange={(e) => handleChange("designer", e.target.value)}
+              />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit_sku">SKU *</Label>
-                <Input id="edit_sku" value={form.sku} onChange={(e) => handleChange("sku", e.target.value)} required />
+                <Input
+                  id="edit_sku"
+                  value={form.sku}
+                  onChange={(e) => handleChange("sku", e.target.value)}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit_product_type">Type / variant</Label>
-                <Input id="edit_product_type" value={form.product_type} onChange={(e) => handleChange("product_type", e.target.value)} />
+                <Input
+                  id="edit_product_type"
+                  value={form.product_type}
+                  onChange={(e) => handleChange("product_type", e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit_price">Price (R)</Label>

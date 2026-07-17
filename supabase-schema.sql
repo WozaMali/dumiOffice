@@ -191,35 +191,8 @@ CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(customer_email);
 CREATE INDEX IF NOT EXISTS idx_addresses_customer_id ON addresses(customer_id);
 
 -- ============================================
--- SAMPLE DATA
+-- SAMPLE DATA (removed — start empty in production)
 -- ============================================
-
--- Insert sample products
-INSERT INTO products (sku, product_name, product_category, product_type, price, cost, stock_on_hand, stock_threshold) VALUES
-('DE-OR50', 'Oud Royal 50ml', 'Perfume', 'EDP 50ml', 1250.00, 450.00, 3, 10),
-('DE-OR100', 'Oud Royal 100ml', 'Perfume', 'EDP 100ml', 2400.00, 850.00, 18, 15),
-('DE-RN100', 'Rose Noir 100ml', 'Perfume', 'EDP 100ml', 890.00, 320.00, 5, 15),
-('DE-AVS', 'Amber Velvet Set', 'Perfume', 'Gift Set', 2100.00, 750.00, 24, 10),
-('DE-JD30', 'Jasmine Dreams 30ml', 'Perfume', 'EDP 30ml', 650.00, 230.00, 32, 8),
-('DE-MI50', 'Musk Intense 50ml', 'Perfume', 'EDP 50ml', 980.00, 350.00, 14, 12),
-('DE-VS30', 'Vanilla Silk 30ml', 'Perfume', 'EDP 30ml', 550.00, 195.00, 2, 8),
-('DE-OR-RD', 'Oud Royal Reed Diffuser', 'Diffuser', 'Reed Diffuser', 450.00, 160.00, 12, 5),
-('DE-RN-RD', 'Rose Noir Reed Diffuser', 'Diffuser', 'Reed Diffuser', 420.00, 150.00, 8, 5),
-('DE-OR-CAR', 'Oud Royal Car Diffuser', 'Car Perfume', 'Vent Clip', 180.00, 65.00, 25, 10)
-ON CONFLICT (sku) DO NOTHING;
-
--- Insert sample customers
-INSERT INTO customers (id, customer_name, customer_email, customer_phone, customer_type, lifetime_value, total_orders, first_order_date, last_order_date) VALUES
-('a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Amara Nkosi', 'amara@example.com', '+27 82 000 0001', 'retail', 1250.00, 1, '2026-02-27', '2026-02-27'),
-('b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Lindiwe Mokoena', 'lindiwe@example.com', '+27 72 000 0002', 'retail', 890.00, 1, '2026-02-26', '2026-02-26'),
-('c3d4e5f6-a7b8-6c7d-0e1f-2a3b4c5d6e7f', 'Thabo Khumalo', 'thabo@example.com', '+27 73 000 0003', 'vip', 2100.00, 1, '2026-02-25', '2026-02-25')
-ON CONFLICT (id) DO NOTHING;
-
--- Insert sample addresses
-INSERT INTO addresses (customer_id, address_type, address_line, suburb, city, postal_code) VALUES
-('a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'delivery', '12 Rosewood Lane', 'Sandton', 'Johannesburg', '2196'),
-('b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'delivery', '8 Jacaranda Street', 'Hatfield', 'Pretoria', '0083'),
-('c3d4e5f6-a7b8-6c7d-0e1f-2a3b4c5d6e7f', 'delivery', 'Unit 5, Parkview Lofts', 'Rosebank', 'Johannesburg', '2193');
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE customers ENABLE ROW LEVEL SECURITY;

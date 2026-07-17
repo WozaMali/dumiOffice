@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import PageHero from "@/components/PageHero";
 import { ContentSection } from "@/components/ContentSection";
@@ -41,7 +41,10 @@ import {
   categoryPreviewImagesFromSettings,
   categoryLabelPositionsFromSettings,
   emptyCategoryLabelPositions,
+  fitLabelFontSizeToContainer,
   parseCategoryLabelPosition,
+  personalisationLabelFontOptionsForCategory,
+  personalisationLabelFontSizePx,
   type PersonalisationCategoryCode,
 } from "@/lib/utils/personalisation";
 import { isAbortError } from "@/lib/utils";
@@ -52,6 +55,7 @@ import {
   PRODUCT_CATEGORY_OPTIONS,
   STOREFRONT_COLLECTION_PRESETS,
 } from "@/lib/utils/product-lines";
+import { isDiffuserProduct } from "@/lib/utils/product-sizes";
 import {
   groupHeroSlidesByPage,
   HERO_PAGE_GROUPS,
@@ -64,7 +68,7 @@ import {
   heroStorageImageUrl,
   productStorageImageUrl,
 } from "@/lib/utils/storage-image";
-import { compressImageForUpload } from "@/lib/utils/compress-image";
+import { compressionToastMessage } from "@/lib/utils/compress-image";
 import { supabase } from "@/lib/supabase";
 import type {
   Collection,
@@ -366,6 +370,8 @@ const Content = () => {
      price50ml: string;
      has100ml: boolean;
      price100ml: string;
+     has200ml: boolean;
+     price200ml: string;
     basePrice: string;
     defaultSize: string;
     isBestseller: boolean;
@@ -387,6 +393,8 @@ const Content = () => {
     price50ml: "",
     has100ml: false,
     price100ml: "",
+    has200ml: false,
+    price200ml: "",
     basePrice: "",
     defaultSize: "50ml",
     isBestseller: false,
@@ -1177,24 +1185,14 @@ const Content = () => {
   });
 
   const productImageUploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const bucket = "product_assets";
-      const compressed = await compressImageForUpload(file, "product");
-      const path = `products/${Date.now()}-${compressed.name}`;
-      const { data, error } = await supabase.storage
-        .from(bucket)
-        .upload(path, compressed, { contentType: compressed.type || undefined });
-      if (error || !data) {
-        throw error || new Error("Failed to upload product image");
-      }
-      return data.path;
-    },
-    onSuccess: (path) => {
+    mutationFn: async (file: File) => productContentApi.uploadPrimaryImage(file),
+    onSuccess: ({ path, compression }) => {
       setProductForm((f) => ({
         ...f,
         primaryImagePath: path,
       }));
-      toast.success("Product image uploaded.");
+      setProductPreviewImageUrl(productStorageImageUrl(path, "pdp"));
+      toast.success(compressionToastMessage("Main image", compression));
     },
     onError: (err: any) => {
       toast.error(err?.message || "Failed to upload product image.");
@@ -1202,34 +1200,46 @@ const Content = () => {
   });
 
   const galleryImageUploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (files: File[]) => {
       if (!editingProduct) {
         throw new Error("No product selected.");
       }
-      const bucket = "product_assets";
-      const compressed = await compressImageForUpload(file, "product");
-      const path = `products/gallery/${Date.now()}-${compressed.name}`;
-      const { data, error } = await supabase.storage
-        .from(bucket)
-        .upload(path, compressed, { contentType: compressed.type || undefined });
-      if (error || !data) {
-        throw error || new Error("Failed to upload gallery image");
-      }
-      const sortOrder =
+      let nextSort =
         productImages.length > 0
           ? Math.max(...productImages.map((p) => p.sort_order)) + 1
           : 0;
-      const img = await productContentApi.addImage({
-        product_id: editingProduct.id,
-        kind: "gallery",
-        path: data.path,
-        sort_order: sortOrder,
-      });
-      return img;
+      const uploaded: Array<{
+        image: Awaited<ReturnType<typeof productContentApi.uploadGalleryImage>>["image"];
+        compression: Awaited<
+          ReturnType<typeof productContentApi.uploadGalleryImage>
+        >["compression"];
+      }> = [];
+      for (const file of files) {
+        const result = await productContentApi.uploadGalleryImage({
+          product_id: editingProduct.id,
+          file,
+          sort_order: nextSort,
+        });
+        uploaded.push(result);
+        nextSort += 1;
+      }
+      return uploaded;
     },
-    onSuccess: (img) => {
-      setProductImages((arr) => [...arr, img]);
-      toast.success("Gallery image added.");
+    onSuccess: (uploaded) => {
+      setProductImages((arr) => [...arr, ...uploaded.map((u) => u.image)]);
+      if (uploaded.length === 1) {
+        toast.success(compressionToastMessage("Gallery image", uploaded[0].compression));
+      } else {
+        const totalIn = uploaded.reduce((s, u) => s + u.compression.originalBytes, 0);
+        const totalOut = uploaded.reduce((s, u) => s + u.compression.outputBytes, 0);
+        toast.success(
+          compressionToastMessage(`${uploaded.length} gallery images`, {
+            originalBytes: totalIn,
+            outputBytes: totalOut,
+            didCompress: totalOut < totalIn,
+          }),
+        );
+      }
     },
     onError: (err: any) => {
       toast.error(err?.message || "Failed to upload gallery image.");
@@ -1272,6 +1282,75 @@ const Content = () => {
     personalisationForm.categoryPreviewImages[previewCategory] ||
     personalisationSettings?.preview_image_url ||
     null;
+
+  const personalisationLabelText =
+    personalisationForm.previewName.trim() ||
+    personalisationForm.placeholderText.trim() ||
+    "Your Name";
+
+  const personalisationLabelFontOpts = useMemo(
+    () => personalisationLabelFontOptionsForCategory(previewCategory),
+    [previewCategory],
+  );
+
+  const personalisationLabelFontEstimate = useMemo(
+    () =>
+      personalisationLabelFontSizePx(personalisationLabelText, personalisationLabelFontOpts),
+    [personalisationLabelText, personalisationLabelFontOpts],
+  );
+
+  const personalisationLabelBoxRef = useRef<HTMLDivElement>(null);
+  const personalisationLabelTextRef = useRef<HTMLSpanElement>(null);
+  const [personalisationLabelFontPx, setPersonalisationLabelFontPx] = useState(
+    personalisationLabelFontEstimate,
+  );
+  const [personalisationPreviewReady, setPersonalisationPreviewReady] = useState(0);
+
+  const labelTopPct = Number(activeLabelPosition.top);
+  const labelLeftPct = Number(activeLabelPosition.left);
+  const labelWidthPct = Number(activeLabelPosition.width);
+  const safeLabelTop = Number.isFinite(labelTopPct) ? labelTopPct : 42;
+  const safeLabelLeft = Number.isFinite(labelLeftPct) ? labelLeftPct : 50;
+  // Diffuser jars are narrower — clamp an empty/invalid/over-wide box so fit always has a real width.
+  const safeLabelWidth = (() => {
+    const raw = Number.isFinite(labelWidthPct) && labelWidthPct > 0 ? labelWidthPct : 72;
+    if (previewCategory === "diffuser") return Math.min(raw, 58);
+    return Math.min(raw, 85);
+  })();
+
+  useLayoutEffect(() => {
+    const box = personalisationLabelBoxRef.current;
+    const textEl = personalisationLabelTextRef.current;
+    if (!box || !textEl) {
+      setPersonalisationLabelFontPx(personalisationLabelFontEstimate);
+      return;
+    }
+
+    const applyFit = () => {
+      setPersonalisationLabelFontPx(
+        fitLabelFontSizeToContainer(textEl, box, personalisationLabelFontOpts),
+      );
+    };
+
+    applyFit();
+
+    const ro =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => applyFit()) : null;
+    ro?.observe(box);
+
+    return () => ro?.disconnect();
+  }, [
+    personalisationLabelText,
+    personalisationLabelFontEstimate,
+    personalisationLabelFontOpts,
+    personalisationForm.previewFontFamily,
+    safeLabelTop,
+    safeLabelLeft,
+    safeLabelWidth,
+    previewCategory,
+    personalisationPreviewPath,
+    personalisationPreviewReady,
+  ]);
 
   const pictureCards = useMemo(() => {
     if (!collectionProducts.length || !collections.length) return [];
@@ -1749,6 +1828,7 @@ const Content = () => {
                   decoding="async"
                   alt="Blank bottle preview"
                   className="h-full w-full object-cover"
+                  onLoad={() => setPersonalisationPreviewReady((n) => n + 1)}
                 />
               ) : (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary/10 via-background/40 to-accent/15 p-6 text-center">
@@ -1759,16 +1839,23 @@ const Content = () => {
                 </div>
               )}
               <div
-                className="pointer-events-none absolute text-center text-sm font-medium tracking-[0.06em] text-foreground/90"
+                ref={personalisationLabelBoxRef}
+                className="pointer-events-none absolute overflow-hidden text-center font-medium tracking-[0.06em] text-foreground/90"
                 style={{
-                  top: `${activeLabelPosition.top}%`,
-                  left: `${activeLabelPosition.left}%`,
-                  width: `${activeLabelPosition.width}%`,
+                  top: `${safeLabelTop}%`,
+                  left: `${safeLabelLeft}%`,
+                  width: `${safeLabelWidth}%`,
                   transform: "translate(-50%, -50%)",
                   fontFamily: personalisationForm.previewFontFamily,
                 }}
               >
-                {personalisationForm.previewName || personalisationForm.placeholderText}
+                <span
+                  ref={personalisationLabelTextRef}
+                  className="inline-block max-w-full whitespace-nowrap leading-none"
+                  style={{ fontSize: `${personalisationLabelFontPx}px` }}
+                >
+                  {personalisationLabelText}
+                </span>
               </div>
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground">
@@ -1844,11 +1931,15 @@ const Content = () => {
                 <Label>Preview name</Label>
                 <Input
                   value={personalisationForm.previewName}
+                  maxLength={Math.max(1, Number(personalisationForm.maxNameLength) || 20)}
                   onChange={(e) =>
                     setPersonalisationForm((f) => ({ ...f, previewName: e.target.value }))
                   }
                   placeholder="Type to preview on bottle"
                 />
+                <p className="text-[11px] text-muted-foreground">
+                  Font shrinks as you add characters so the name stays inside the bottle.
+                </p>
               </div>
             </div>
 
@@ -2518,10 +2609,14 @@ const Content = () => {
                           productStorageImageUrl(p.primary_image_path, "pdp"),
                         );
                         setProductTab("basic");
-                        setProductForm({
-                          code: ((p as any).code as string) ?? "",
+                        {
+                          const existingCode = ((p as any).code as string) ?? "";
+                          const existingName = p.name ?? p.product_name ?? "";
+                          const linked = existingCode.trim() || existingName;
+                          setProductForm({
+                          code: linked,
                           sku: p.sku ?? "",
-                          name: p.name ?? p.product_name,
+                          name: linked,
                           collectionCode: p.collection_code ?? "",
                           category:
                             (p.category as string) ??
@@ -2545,13 +2640,23 @@ const Content = () => {
                             (p as any).price_100ml != null
                               ? String((p as any).price_100ml)
                               : "",
+                          has200ml:
+                            (p as any).price_200ml != null ||
+                            isDiffuserProduct(p),
+                          price200ml:
+                            (p as any).price_200ml != null
+                              ? String((p as any).price_200ml)
+                              : String(p.base_price ?? p.price ?? ""),
                           basePrice: String(p.base_price ?? p.price ?? "" ?? ""),
-                          defaultSize: p.default_size ?? "50ml",
+                          defaultSize: isDiffuserProduct(p)
+                            ? "200ml"
+                            : p.default_size ?? "50ml",
                           isBestseller: !!p.is_bestseller,
                           isFeatured: !!p.is_featured,
                           isNew: !!p.is_new,
                           primaryImagePath: p.primary_image_path ?? "",
                         });
+                        }
                         // Lazy-load imagery and notes when opening; ignore errors silently
                         productContentApi
                           .listImages(p.id)
@@ -2631,7 +2736,10 @@ const Content = () => {
                           </div>
                           {price != null && (
                             <p className="text-sm font-medium text-foreground">
-                              R{price.toFixed(2)} · {p.default_size ?? "50ml"}
+                              R{price.toFixed(2)} ·{" "}
+                              {isDiffuserProduct(p)
+                                ? "200ml"
+                                : p.default_size ?? "50ml"}
                             </p>
                           )}
                           {p.short_description && (
@@ -3410,8 +3518,8 @@ const Content = () => {
                         await productContentApi.update(editingProduct.id, {
                           code: productForm.code || undefined,
                           sku: productForm.sku || undefined,
-                          name: productForm.name,
-                          product_name: productForm.name,
+                          name: productForm.code || productForm.name,
+                          product_name: productForm.code || productForm.name,
                           collection_code:
                             productForm.collectionCode || undefined,
                           category: productForm.category || undefined,
@@ -3421,21 +3529,46 @@ const Content = () => {
                             productForm.longDescription || undefined,
                           reassurance_copy:
                             (productForm.reassuranceCopy || undefined) as any,
-                          price_30ml:
-                            productForm.has30ml && productForm.price30ml
-                              ? Number(productForm.price30ml)
-                              : undefined,
-                          price_50ml:
-                            productForm.has50ml && productForm.price50ml
-                              ? Number(productForm.price50ml)
-                              : undefined,
-                          price_100ml:
-                            productForm.has100ml && productForm.price100ml
-                              ? Number(productForm.price100ml)
-                              : undefined,
-                          base_price: basePriceNum || undefined,
-                          price: basePriceNum || undefined,
-                          default_size: productForm.defaultSize || undefined,
+                          ...(isDiffuserProduct({
+                            collectionCode: productForm.collectionCode,
+                            category: productForm.category,
+                          })
+                            ? {
+                                price_30ml: null,
+                                price_50ml: null,
+                                price_100ml: null,
+                                price_200ml:
+                                  productForm.has200ml && productForm.price200ml
+                                    ? Number(productForm.price200ml)
+                                    : basePriceNum || null,
+                                default_size: "200ml",
+                                base_price:
+                                  (productForm.has200ml && productForm.price200ml
+                                    ? Number(productForm.price200ml)
+                                    : basePriceNum) || undefined,
+                                price:
+                                  (productForm.has200ml && productForm.price200ml
+                                    ? Number(productForm.price200ml)
+                                    : basePriceNum) || undefined,
+                              }
+                            : {
+                                price_30ml:
+                                  productForm.has30ml && productForm.price30ml
+                                    ? Number(productForm.price30ml)
+                                    : null,
+                                price_50ml:
+                                  productForm.has50ml && productForm.price50ml
+                                    ? Number(productForm.price50ml)
+                                    : null,
+                                price_100ml:
+                                  productForm.has100ml && productForm.price100ml
+                                    ? Number(productForm.price100ml)
+                                    : null,
+                                price_200ml: null,
+                                default_size: productForm.defaultSize || "50ml",
+                                base_price: basePriceNum || undefined,
+                                price: basePriceNum || undefined,
+                              }),
                           primary_image_path:
                             productForm.primaryImagePath || undefined,
                           is_bestseller: productForm.isBestseller,
@@ -3492,12 +3625,14 @@ const Content = () => {
                             <Label>Code</Label>
                             <Input
                               value={productForm.code}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const code = e.target.value;
                                 setProductForm((f) => ({
                                   ...f,
-                                  code: e.target.value,
-                                }))
-                              }
+                                  code,
+                                  name: code,
+                                }));
+                              }}
                               placeholder="e.g. umoya-bergamot"
                             />
                           </div>
@@ -3519,28 +3654,59 @@ const Content = () => {
                           <Label>Name</Label>
                           <Input
                             value={productForm.name}
-                            onChange={(e) =>
-                              setProductForm((f) => ({
-                                ...f,
-                                name: e.target.value,
-                              }))
-                            }
-                            placeholder="Display name used in storefront"
+                            readOnly
+                            className="bg-muted/40"
+                            placeholder="Matches Code"
                           />
+                          <p className="text-[11px] text-muted-foreground">
+                            Always matches Code — edit Code to change Name.
+                          </p>
                         </div>
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-2">
-                            <Label>Collection code</Label>
-                            <Input
+                            <Label>Fragrance line (collection code)</Label>
+                            <select
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               value={productForm.collectionCode}
                               onChange={(e) =>
-                                setProductForm((f) => ({
-                                  ...f,
-                                  collectionCode: e.target.value,
-                                }))
+                                setProductForm((f) => {
+                                  const collectionCode = e.target.value;
+                                  const category = collectionCode || f.category;
+                                  const diffuser = isDiffuserProduct({
+                                    collectionCode,
+                                    category,
+                                  });
+                                  return {
+                                    ...f,
+                                    collectionCode,
+                                    category,
+                                    ...(diffuser
+                                      ? {
+                                          has30ml: false,
+                                          has50ml: false,
+                                          has100ml: false,
+                                          has200ml: true,
+                                          defaultSize: "200ml",
+                                          price200ml:
+                                            f.price200ml || f.basePrice || f.price50ml,
+                                        }
+                                      : {
+                                          has200ml: false,
+                                          defaultSize:
+                                            f.defaultSize === "200ml" ? "50ml" : f.defaultSize,
+                                        }),
+                                  };
+                                })
                               }
-                              placeholder="e.g. mens"
-                            />
+                            >
+                              <option value="">Select line…</option>
+                              <option value="mens">Men's</option>
+                              <option value="womens">Women's</option>
+                              <option value="unisex">Unisex</option>
+                              <option value="diffuser">Diffuser</option>
+                              <option value="car-perfumes">Car Perfume</option>
+                              <option value="cosmetics">Cosmetics</option>
+                            </select>
                           </div>
                           <div className="space-y-2">
                             <Label>Category</Label>
@@ -3552,7 +3718,7 @@ const Content = () => {
                                   category: e.target.value,
                                 }))
                               }
-                              placeholder="mens / womens / unisex / diffuser / car-perfumes / cosmetics"
+                              placeholder="Usually mirrors collection code"
                             />
                           </div>
                         </div>
@@ -3613,6 +3779,16 @@ const Content = () => {
                                 setProductForm((f) => ({
                                   ...f,
                                   basePrice: e.target.value,
+                                  ...(isDiffuserProduct({
+                                    collectionCode: f.collectionCode,
+                                    category: f.category,
+                                  })
+                                    ? {
+                                        price200ml: e.target.value,
+                                        has200ml: true,
+                                        defaultSize: "200ml",
+                                      }
+                                    : {}),
                                 }))
                               }
                             />
@@ -3620,12 +3796,31 @@ const Content = () => {
                           <div className="space-y-2">
                             <Label>Default size</Label>
                             <Input
-                              value={productForm.defaultSize}
+                              value={
+                                isDiffuserProduct({
+                                  collectionCode: productForm.collectionCode,
+                                  category: productForm.category,
+                                })
+                                  ? "200ml"
+                                  : productForm.defaultSize
+                              }
                               onChange={(e) =>
                                 setProductForm((f) => ({
                                   ...f,
                                   defaultSize: e.target.value,
                                 }))
+                              }
+                              readOnly={isDiffuserProduct({
+                                collectionCode: productForm.collectionCode,
+                                category: productForm.category,
+                              })}
+                              className={
+                                isDiffuserProduct({
+                                  collectionCode: productForm.collectionCode,
+                                  category: productForm.category,
+                                })
+                                  ? "bg-muted/40"
+                                  : undefined
                               }
                               placeholder="e.g. 50ml"
                             />
@@ -3633,10 +3828,56 @@ const Content = () => {
                         </div>
                         <div className="mt-4 space-y-2">
                           <Label>Available sizes & prices</Label>
-                          <p className="text-[11px] text-muted-foreground">
-                            Tick the sizes you sell and enter the price for each. These show as size cards on the product page.
-                          </p>
-                          <div className="space-y-2 text-[11px]">
+                          {isDiffuserProduct({
+                            collectionCode: productForm.collectionCode,
+                            category: productForm.category,
+                          }) ? (
+                            <>
+                              <p className="text-[11px] text-muted-foreground">
+                                Diffusers sell as <strong>200ml only</strong> — 50ml is never shown
+                                on the storefront.
+                              </p>
+                              <div className="flex items-center gap-3 text-[11px]">
+                                <label className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={productForm.has200ml}
+                                    onChange={(e) =>
+                                      setProductForm((f) => ({
+                                        ...f,
+                                        has200ml: e.target.checked,
+                                        defaultSize: "200ml",
+                                      }))
+                                    }
+                                    className="h-3.5 w-3.5 rounded border-border bg-background accent-current"
+                                  />
+                                  <span>200ml</span>
+                                </label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  className="h-7 w-32 text-xs"
+                                  placeholder="Price"
+                                  value={productForm.price200ml}
+                                  onChange={(e) =>
+                                    setProductForm((f) => ({
+                                      ...f,
+                                      price200ml: e.target.value,
+                                      basePrice: e.target.value,
+                                      has200ml: true,
+                                      defaultSize: "200ml",
+                                    }))
+                                  }
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[11px] text-muted-foreground">
+                                Tick the sizes you sell and enter the price for each. These show as
+                                size cards on the product page.
+                              </p>
+                              <div className="space-y-2 text-[11px]">
                             <div className="flex items-center gap-3">
                               <label className="flex items-center gap-2">
                                 <input
@@ -3724,7 +3965,9 @@ const Content = () => {
                                 }
                               />
                             </div>
-                          </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </>
                     )}
@@ -3733,6 +3976,10 @@ const Content = () => {
                       <>
                         <div className="space-y-2">
                           <Label>Main bottle image</Label>
+                          <p className="text-[11px] text-muted-foreground">
+                            Auto-compressed to WebP/JPEG (max ~1400px, under ~280 KB) before upload to{" "}
+                            <code className="text-[10px]">product_assets</code>.
+                          </p>
                           <div className="flex items-center gap-2">
                             <Button
                               type="button"
@@ -3742,7 +3989,7 @@ const Content = () => {
                               disabled={productImageUploadMutation.isPending}
                             >
                               {productImageUploadMutation.isPending
-                                ? "Uploading…"
+                                ? "Compressing & uploading…"
                                 : "Upload image"}
                             </Button>
                             {productForm.primaryImagePath ? (
@@ -3758,12 +4005,11 @@ const Content = () => {
                           <input
                             ref={productImageInputRef}
                             type="file"
-                            accept="image/*"
+                            accept="image/jpeg,image/png,image/webp,image/jpg"
                             className="hidden"
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
-                              setProductPreviewImageUrl(URL.createObjectURL(file));
                               productImageUploadMutation.mutate(file);
                               e.target.value = "";
                             }}
@@ -3782,8 +4028,8 @@ const Content = () => {
                         <div className="space-y-2">
                           <Label>Gallery images</Label>
                           <p className="text-[11px] text-muted-foreground">
-                            (Optional) Alternate or detail images used on the
-                            product page.
+                            Optional detail shots. Each file is compressed the same way as the main
+                            image. You can select multiple at once.
                           </p>
                           <div className="mt-1 flex items-center gap-2">
                             <Button
@@ -3794,20 +4040,20 @@ const Content = () => {
                               disabled={galleryImageUploadMutation.isPending}
                             >
                               {galleryImageUploadMutation.isPending
-                                ? "Uploading…"
-                                : "Add image"}
+                                ? "Compressing & uploading…"
+                                : "Add images"}
                             </Button>
                           </div>
                           <input
                             ref={galleryImageInputRef}
                             type="file"
-                            accept="image/*"
+                            accept="image/jpeg,image/png,image/webp,image/jpg"
+                            multiple
                             className="hidden"
                             onChange={(e) => {
                               const files = Array.from(e.target.files ?? []);
                               if (!files.length) return;
-                              // Upload first selected image as gallery image
-                              galleryImageUploadMutation.mutate(files[0]);
+                              galleryImageUploadMutation.mutate(files);
                               e.target.value = "";
                             }}
                           />

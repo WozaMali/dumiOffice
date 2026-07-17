@@ -341,32 +341,42 @@ const Index = () => {
           <div className="section-header">
             <div>
               <h2 className="section-title">Stewardship queue</h2>
-              <p className="section-copy">The high-touch actions preserving service quality this week.</p>
+              <p className="section-copy">High-touch actions from live inventory and open orders.</p>
             </div>
-            <span className="luxury-note">5 pending</span>
+            <span className="luxury-note">
+              {products.filter((p) => p.stock_on_hand <= p.stock_threshold).length + openOrdersCount} signals
+            </span>
           </div>
           <ul className="space-y-3 text-sm">
-            <li className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-primary" />
-              <div className="flex-1">
-                <p className="text-foreground">Investigate courier delay for order DE-1042</p>
-                <p className="text-[11px] text-muted-foreground mt-1">High · Incident · Today</p>
-              </div>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-primary/80" />
-              <div className="flex-1">
-                <p className="text-foreground">Review Oud Royal low stock threshold</p>
-                <p className="text-[11px] text-muted-foreground mt-1">Medium · Inventory · Tomorrow</p>
-              </div>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-white/50" />
-              <div className="flex-1">
-                <p className="text-foreground">Approve &ldquo;Autumn Collection&rdquo; private preview</p>
-                <p className="text-[11px] text-muted-foreground mt-1">Low · Marketing · This week</p>
-              </div>
-            </li>
+            {products
+              .filter((p) => p.stock_on_hand <= p.stock_threshold)
+              .slice(0, 3)
+              .map((p) => (
+                <li key={p.id} className="flex items-start gap-3">
+                  <span className="mt-1 h-2 w-2 rounded-full bg-primary" />
+                  <div className="flex-1">
+                    <p className="text-foreground">Low stock: {p.product_name}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {p.stock_on_hand} on hand · threshold {p.stock_threshold}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            {openOrdersCount > 0 && (
+              <li className="flex items-start gap-3">
+                <span className="mt-1 h-2 w-2 rounded-full bg-primary/80" />
+                <div className="flex-1">
+                  <p className="text-foreground">{openOrdersCount} order{openOrdersCount === 1 ? "" : "s"} in motion</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Open fulfilment · Orders</p>
+                </div>
+              </li>
+            )}
+            {products.filter((p) => p.stock_on_hand <= p.stock_threshold).length === 0 &&
+              openOrdersCount === 0 && (
+                <li className="text-sm text-muted-foreground">
+                  No pending stewardship items. Inventory and orders look clear.
+                </li>
+              )}
           </ul>
         </motion.div>
 
@@ -379,32 +389,66 @@ const Index = () => {
           <div className="section-header">
             <div>
               <h2 className="section-title">Fulfilment signature</h2>
-              <p className="section-copy">Quality markers showing how consistently the house delivers.</p>
+              <p className="section-copy">Quality markers from this month&apos;s order signal.</p>
             </div>
           </div>
           <div className="space-y-4 text-sm">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[13px] text-muted-foreground">Dispatch on time</span>
-                <span className="text-[13px] text-primary">94%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-background/50">
-                <div className="h-full w-[94%] bg-gradient-to-r from-primary/60 to-primary" />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[13px] text-muted-foreground">Perfect orders</span>
-                <span className="text-[13px] text-primary">88%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-background/50">
-                <div className="h-full w-[88%] bg-gradient-to-r from-white/35 to-primary/80" />
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-1">
-              <CheckCircle2 size={14} className="text-primary" />
-              <span>Above target for the last four weeks.</span>
-            </div>
+            {(() => {
+              const now = new Date();
+              const monthOrders = orders.filter((o) => {
+                const d = new Date(o.date);
+                return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+              });
+              const delivered = monthOrders.filter((o) => o.status === "Delivered").length;
+              const onTime =
+                monthOrders.length > 0 ? Math.round((delivered / monthOrders.length) * 100) : 0;
+              const perfect =
+                monthOrders.length > 0
+                  ? Math.round(
+                      ((monthOrders.length -
+                        monthOrders.filter((o) => o.status === "Returned" || o.status === "Cancelled")
+                          .length) /
+                        monthOrders.length) *
+                        100,
+                    )
+                  : 0;
+              return (
+                <>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[13px] text-muted-foreground">Delivered this month</span>
+                      <span className="text-[13px] text-primary">{onTime}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-background/50">
+                      <div
+                        className="h-full bg-gradient-to-r from-primary/60 to-primary"
+                        style={{ width: `${onTime}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[13px] text-muted-foreground">Clean orders</span>
+                      <span className="text-[13px] text-primary">{perfect}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-background/50">
+                      <div
+                        className="h-full bg-gradient-to-r from-white/35 to-primary/80"
+                        style={{ width: `${perfect}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-1">
+                    <CheckCircle2 size={14} className="text-primary" />
+                    <span>
+                      {monthOrders.length > 0
+                        ? `${monthOrders.length} order${monthOrders.length === 1 ? "" : "s"} this month`
+                        : "No orders this month yet"}
+                    </span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </motion.div>
 
@@ -417,40 +461,32 @@ const Index = () => {
           <div className="section-header">
             <div>
               <h2 className="section-title">House activity</h2>
-              <p className="section-copy">Recent movements across logistics, stock, and storytelling.</p>
+              <p className="section-copy">Recent movements from live orders and clients.</p>
             </div>
           </div>
           <ul className="space-y-3 text-sm">
-            <li className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-primary" />
-              <div className="flex-1">
-                <p className="text-foreground">Order DE-1051 dispatched</p>
-                <p className="text-[11px] text-muted-foreground mt-1">Oud Royal 50ml · Johannesburg</p>
-              </div>
-              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <Clock size={11} /> 10 min ago
-              </span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-primary/80" />
-              <div className="flex-1">
-                <p className="text-foreground">Low stock alert updated</p>
-                <p className="text-[11px] text-muted-foreground mt-1">Rose Noir 100ml threshold set to 10</p>
-              </div>
-              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <Clock size={11} /> 25 min ago
-              </span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-white/50" />
-              <div className="flex-1">
-                <p className="text-foreground">&ldquo;Winter Stories&rdquo; hero updated</p>
-                <p className="text-[11px] text-muted-foreground mt-1">Content · Homepage hero slide</p>
-              </div>
-              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <Clock size={11} /> 1 hour ago
-              </span>
-            </li>
+            {orders.slice(0, 3).map((o) => (
+              <li key={o.id} className="flex items-start gap-3">
+                <span className="mt-1 h-2 w-2 rounded-full bg-primary" />
+                <div className="flex-1">
+                  <p className="text-foreground">
+                    {o.reference || o.id} · {o.status}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {o.customer_name || "Client"} · {o.stage || "Open"}
+                  </p>
+                </div>
+                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <Clock size={11} />
+                  {o.date ? new Date(o.date).toLocaleDateString() : "—"}
+                </span>
+              </li>
+            ))}
+            {orders.length === 0 && (
+              <li className="text-sm text-muted-foreground">
+                No order activity yet. New orders will appear here.
+              </li>
+            )}
           </ul>
         </motion.div>
       </div>

@@ -3,6 +3,9 @@ import {
   getCategoryPreviewImage,
   getCategoryPreviewImageUrl,
   getCategoryLabelPosition,
+  personalisationLabelFontSizePx,
+  PERSONALISATION_LABEL_FONT_MAX_PX,
+  PERSONALISATION_LABEL_FONT_MIN_PX,
 } from "@/lib/utils/personalisation";
 import type { PersonalisationSettings } from "@/types/database";
 
@@ -61,5 +64,37 @@ describe("personalisation preview images", () => {
       leftPct: 50,
       widthPct: 72,
     });
+  });
+});
+
+describe("personalisationLabelFontSizePx", () => {
+  it("keeps short names at max size", () => {
+    expect(personalisationLabelFontSizePx("Ava")).toBe(PERSONALISATION_LABEL_FONT_MAX_PX);
+    expect(personalisationLabelFontSizePx("Your Name")).toBe(PERSONALISATION_LABEL_FONT_MAX_PX);
+  });
+
+  it("shrinks as character count grows", () => {
+    const short = personalisationLabelFontSizePx("Alex");
+    const medium = personalisationLabelFontSizePx("Alexandria X");
+    const long = personalisationLabelFontSizePx("Alexandria-Marie X");
+    expect(medium).toBeLessThan(short);
+    expect(long).toBeLessThan(medium);
+  });
+
+  it("never goes below the minimum", () => {
+    const huge = "A".repeat(80);
+    expect(personalisationLabelFontSizePx(huge)).toBe(PERSONALISATION_LABEL_FONT_MIN_PX);
+  });
+
+  it("uses a tighter scale for diffuser", () => {
+    const perfume = personalisationLabelFontSizePx("Alexandria", {
+      maxPx: 22,
+      idealCharsAtMax: 9,
+    });
+    const diffuser = personalisationLabelFontSizePx("Alexandria", {
+      maxPx: 18,
+      idealCharsAtMax: 7,
+    });
+    expect(diffuser).toBeLessThan(perfume);
   });
 });

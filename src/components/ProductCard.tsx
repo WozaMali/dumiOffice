@@ -4,6 +4,10 @@ import { ChevronRight } from "lucide-react";
 import OptimizedImage from "@/components/OptimizedImage";
 import type { Product } from "@/types/database";
 import { productStorageImageSrcSet } from "@/lib/utils/storage-image";
+import {
+  defaultSizeForProduct,
+  displayPriceForProduct,
+} from "@/lib/utils/product-sizes";
 
 interface ProductCardProps {
   product: Product;
@@ -12,14 +16,8 @@ interface ProductCardProps {
 
 const ProductCard = ({ product, index = 0 }: ProductCardProps) => {
   const displayName = product.name ?? product.product_name ?? "Untitled";
-  const price =
-    product.base_price ??
-    product.price_50ml ??
-    product.price_30ml ??
-    product.price_100ml ??
-    product.price ??
-    0;
-  const size = product.default_size ?? "50ml";
+  const price = displayPriceForProduct(product);
+  const size = defaultSizeForProduct(product);
   const code = product.code ?? product.sku ?? product.id;
   const srcSet = productStorageImageSrcSet(product.primary_image_path, "card");
 

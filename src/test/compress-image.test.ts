@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { compressImageForUpload } from "@/lib/utils/compress-image";
+﻿import { describe, expect, it } from "vitest";
+import {
+  compressImageForUpload,
+  compressionToastMessage,
+  formatBytes,
+} from "@/lib/utils/compress-image";
 import { isPdfUpload } from "@/lib/utils/compress-pdf";
 
 describe("compressImageForUpload", () => {
@@ -15,6 +19,18 @@ describe("compressImageForUpload", () => {
     });
     const result = await compressImageForUpload(gif, "product");
     expect(result).toBe(gif);
+  });
+});
+
+describe("compressionToastMessage", () => {
+  it("mentions compression when size drops", () => {
+    const msg = compressionToastMessage("Main image", {
+      originalBytes: 2_000_000,
+      outputBytes: 250_000,
+      didCompress: true,
+    });
+    expect(msg).toContain("compressed");
+    expect(formatBytes(250_000)).toMatch(/KB|MB/);
   });
 });
 

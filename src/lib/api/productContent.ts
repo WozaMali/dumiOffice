@@ -1,5 +1,30 @@
 import { supabase } from "@/lib/supabase";
 import type { Product, ProductImage, ProductNote } from "@/types/database";
+import {
+  compressImageForUploadDetailed,
+  type CompressedImageResult,
+} from "@/lib/utils/compress-image";
+
+const PRODUCT_ASSETS_BUCKET = "product_assets";
+
+async function uploadCompressedProductImage(
+  file: File,
+  folder: "products" | "products/gallery",
+): Promise<{ path: string; compression: CompressedImageResult }> {
+  const compression = await compressImageForUploadDetailed(file, "product");
+  const path = `${folder}/${Date.now()}-${compression.file.name}`;
+  const { data, error } = await supabase.storage
+    .from(PRODUCT_ASSETS_BUCKET)
+    .upload(path, compression.file, {
+      contentType: compression.file.type || "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
+  if (error || !data) {
+    throw error || new Error("Failed to upload product image");
+  }
+  return { path: data.path, compression };
+}
 
 export const productContentApi = {
   async list(): Promise<Product[]> {
@@ -27,6 +52,33 @@ export const productContentApi = {
     const { data, error } = await query;
     if (error) throw error;
     return data as Product;
+  },
+
+  /** Fragrance Products — main bottle image (compressed WebP/JPEG). */
+  async uploadPrimaryImage(file: File): Promise<{
+    path: string;
+    compression: CompressedImageResult;
+  }> {
+    return uploadCompressedProductImage(file, "products");
+  },
+
+  /** Fragrance Products — gallery image (compressed), then row in product_images. */
+  async uploadGalleryImage(input: {
+    product_id: string;
+    file: File;
+    sort_order?: number;
+  }): Promise<{ image: ProductImage; compression: CompressedImageResult }> {
+    const { path, compression } = await uploadCompressedProductImage(
+      input.file,
+      "products/gallery",
+    );
+    const image = await this.addImage({
+      product_id: input.product_id,
+      kind: "gallery",
+      path,
+      sort_order: input.sort_order ?? 0,
+    });
+    return { image, compression };
   },
 
   // Product images (gallery)
@@ -159,4 +211,3 @@ export const productContentApi = {
     if (error) throw error;
   },
 };
-
