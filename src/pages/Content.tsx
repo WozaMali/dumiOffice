@@ -43,6 +43,7 @@ import {
   emptyCategoryLabelPositions,
   fitLabelFontSizeToContainer,
   parseCategoryLabelPosition,
+  personalisationLabelColorForCategory,
   personalisationLabelFontOptionsForCategory,
   personalisationLabelFontSizePx,
   type PersonalisationCategoryCode,
@@ -1840,13 +1841,14 @@ const Content = () => {
               )}
               <div
                 ref={personalisationLabelBoxRef}
-                className="pointer-events-none absolute overflow-hidden text-center font-medium tracking-[0.06em] text-foreground/90"
+                className="pointer-events-none absolute overflow-hidden text-center font-medium tracking-[0.06em]"
                 style={{
                   top: `${safeLabelTop}%`,
                   left: `${safeLabelLeft}%`,
                   width: `${safeLabelWidth}%`,
                   transform: "translate(-50%, -50%)",
                   fontFamily: personalisationForm.previewFontFamily,
+                  color: personalisationLabelColorForCategory(previewCategory),
                 }}
               >
                 <span

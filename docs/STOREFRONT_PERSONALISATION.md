@@ -78,7 +78,16 @@ Office preview uses:
 1. Character estimate: `size = clamp(8, max * ideal / length, max)` — perfume `max≈22`, `ideal≈9`; **Diffuser** uses tighter `max≈18`, `ideal≈7` because jars are narrower
 2. Then measure-to-fit: reduce `font-size` until `scrollWidth <=` the label box width (`white-space: nowrap`). Character estimate is always applied as a ceiling so Diffuser cannot stay oversized when the width % box is too wide.
 
-Shared helpers (copy or mirror in the main app): `personalisationLabelFontSizePx`, `fitLabelFontSizeToContainer` in `src/lib/utils/personalisation.ts`.
+Shared helpers (copy or mirror in the main app): `personalisationLabelFontSizePx`, `fitLabelFontSizeToContainer`, `personalisationLabelColorForCategory` in `src/lib/utils/personalisation.ts`.
+
+### Label name colour
+
+| Category | Colour |
+| --- | --- |
+| Men's, Diffuser | White `#ffffff` |
+| Women's, Unisex | Dark grey `#3f3f46` |
+
+Use `personalisationLabelColorForCategory(category)` (or `storefrontPersonalisationApi.getLabelColor(category)`) for the overlay `color` style.
 
 Run `docs/SUPABASE_PERSONALISATION_LABEL_POSITIONS.sql` once to add these columns on existing databases.
 

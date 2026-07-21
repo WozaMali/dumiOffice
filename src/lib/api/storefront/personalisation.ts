@@ -8,6 +8,7 @@ import type { PersonalisationFont, PersonalisationSettings } from "@/types/datab
 import {
   getCategoryPreviewImageUrl,
   getCategoryLabelPosition,
+  personalisationLabelColorForCategory,
   PERSONALISATION_CATEGORIES,
   PERSONALISATION_PREVIEW_BUCKET,
   resolvePersonalisationPreviewImageUrl,
@@ -17,6 +18,7 @@ import {
 export {
   getCategoryPreviewImageUrl,
   getCategoryLabelPosition,
+  personalisationLabelColorForCategory,
   PERSONALISATION_CATEGORIES,
   PERSONALISATION_PREVIEW_BUCKET,
   resolvePersonalisationPreviewImageUrl,
@@ -62,5 +64,10 @@ export const storefrontPersonalisationApi = {
     category: PersonalisationCategoryCode,
   ) {
     return getCategoryLabelPosition(settings, category);
+  },
+
+  /** Label text colour for the selected category (white on Men/Diffuser, dark grey on Women/Unisex). */
+  getLabelColor(category: PersonalisationCategoryCode): string {
+    return personalisationLabelColorForCategory(category);
   },
 };

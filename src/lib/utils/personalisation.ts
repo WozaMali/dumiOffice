@@ -292,3 +292,11 @@ export function personalisationLabelFontOptionsForCategory(
     idealCharsAtMax: PERSONALISATION_LABEL_IDEAL_CHARS,
   };
 }
+
+/** Label text colour on bottle previews — white on dark labels, dark grey on light ones. */
+export function personalisationLabelColorForCategory(
+  category: PersonalisationCategoryCode,
+): string {
+  if (category === "mens" || category === "diffuser") return "#ffffff";
+  return "#3f3f46";
+}

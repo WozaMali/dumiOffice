@@ -3,6 +3,7 @@ import {
   getCategoryPreviewImage,
   getCategoryPreviewImageUrl,
   getCategoryLabelPosition,
+  personalisationLabelColorForCategory,
   personalisationLabelFontSizePx,
   PERSONALISATION_LABEL_FONT_MAX_PX,
   PERSONALISATION_LABEL_FONT_MIN_PX,
@@ -96,5 +97,17 @@ describe("personalisationLabelFontSizePx", () => {
       idealCharsAtMax: 7,
     });
     expect(diffuser).toBeLessThan(perfume);
+  });
+});
+
+describe("personalisationLabelColorForCategory", () => {
+  it("uses white on dark bottle labels (men, diffuser)", () => {
+    expect(personalisationLabelColorForCategory("mens")).toBe("#ffffff");
+    expect(personalisationLabelColorForCategory("diffuser")).toBe("#ffffff");
+  });
+
+  it("uses dark grey on light bottle labels (women, unisex)", () => {
+    expect(personalisationLabelColorForCategory("womens")).toBe("#3f3f46");
+    expect(personalisationLabelColorForCategory("unisex")).toBe("#3f3f46");
   });
 });
