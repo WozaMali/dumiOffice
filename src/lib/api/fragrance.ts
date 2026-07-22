@@ -11,6 +11,29 @@ import type {
   ScentechEthanolProduct,
 } from "@/types/database";
 
+export const SCENT_PROFORMA_EXTRA_LINES_SETUP_HINT =
+  "Run docs/SUPABASE_SCENT_PROFORMA_EXTRA_LINES.sql in the Supabase SQL Editor, then refresh this page.";
+
+function isMissingExtraLinesTable(error: unknown): boolean {
+  const err = error as { code?: string; message?: string; details?: string } | null;
+  const combined = `${err?.message || ""} ${err?.details || ""}`.toLowerCase();
+  if (err?.code === "PGRST205" || err?.code === "42P01") {
+    return combined.includes("scent_proforma_extra_lines");
+  }
+  return (
+    combined.includes("scent_proforma_extra_lines") &&
+    (combined.includes("schema cache") ||
+      combined.includes("does not exist") ||
+      combined.includes("could not find"))
+  );
+}
+
+function assertExtraLinesTable(error: unknown): void {
+  if (isMissingExtraLinesTable(error)) {
+    throw new Error(SCENT_PROFORMA_EXTRA_LINES_SETUP_HINT);
+  }
+}
+
 export const fragranceApi = {
   // Essential oils master list
   async listEssentialOilProducts(): Promise<EssentialOilProduct[]> {
@@ -109,7 +132,10 @@ export const fragranceApi = {
         .insert(extrasPayload)
         .select();
 
-      if (error) throw error;
+      if (error) {
+        assertExtraLinesTable(error);
+        throw error;
+      }
       insertedExtras = (data ?? []) as ScentProformaExtraLine[];
     }
 
@@ -142,7 +168,10 @@ export const fragranceApi = {
       .from("scent_proforma_extra_lines")
       .delete()
       .eq("proforma_id", proformaId);
-    if (delExtrasErr) throw delExtrasErr;
+    if (delExtrasErr) {
+      assertExtraLinesTable(delExtrasErr);
+      throw delExtrasErr;
+    }
 
     let insertedLines: ScentProformaLine[] = [];
     if (lines.length) {
@@ -168,7 +197,10 @@ export const fragranceApi = {
         .from("scent_proforma_extra_lines")
         .insert(extrasPayload)
         .select();
-      if (error) throw error;
+      if (error) {
+        assertExtraLinesTable(error);
+        throw error;
+      }
       insertedExtras = (data ?? []) as ScentProformaExtraLine[];
     }
 
@@ -226,7 +258,10 @@ export const fragranceApi = {
       .select("*")
       .eq("proforma_id", proformaId)
       .order("created_at");
-    if (error) throw error;
+    if (error) {
+      assertExtraLinesTable(error);
+      throw error;
+    }
     return (data ?? []) as ScentProformaExtraLine[];
   },
 

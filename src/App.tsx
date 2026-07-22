@@ -14,6 +14,8 @@ import Content from "./pages/Content";
 import SettingsPage from "./pages/SettingsPage";
 import Accounting from "./pages/Accounting";
 import Marketing from "./pages/Marketing";
+import DiscountCoupons from "./pages/DiscountCoupons";
+import Resellers from "./pages/Resellers";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
 import AuthGate from "./components/AuthGate";
@@ -85,6 +87,8 @@ const App = () => (
             <Route path="/accounting" element={<Accounting />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/marketing" element={<Marketing />} />
+            <Route path="/coupons" element={<DiscountCoupons />} />
+            <Route path="/resellers" element={<Resellers />} />
             <Route path="/content" element={<Content />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>

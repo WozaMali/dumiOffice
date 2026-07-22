@@ -208,17 +208,20 @@ export function drawPdfLetterhead(
   const tagline = options.tagline ?? "Fine fragrances and home scenting";
 
   doc.setFillColor(20, 20, 20);
-  doc.rect(0, 0, pageWidth, 40, "F");
+  const bandH = compact ? 28 : 40;
+  doc.rect(0, 0, pageWidth, bandH, "F");
 
   if (logo) {
-    const logoWidth = (logo.width / logo.height) * LOGO_HEIGHT_MM;
+    const logoH = compact ? 12 : LOGO_HEIGHT_MM;
+    const logoY = compact ? 8 : LOGO_Y;
+    const logoWidth = (logo.width / logo.height) * logoH;
     addPdfRasterImage(
       doc,
       logo,
       (pageWidth - logoWidth) / 2,
-      LOGO_Y,
+      logoY,
       logoWidth,
-      LOGO_HEIGHT_MM,
+      logoH,
     );
   }
 
@@ -243,7 +246,8 @@ export function drawPdfLetterhead(
 
   doc.setDrawColor(200, 170, 90);
   doc.setLineWidth(0.6);
-  doc.line(margin, 45, pageWidth - margin, 45);
+  const ruleY = compact ? 32 : 45;
+  doc.line(margin, ruleY, pageWidth - margin, ruleY);
 
-  return compact ? 52 : 70;
+  return compact ? 36 : 70;
 }

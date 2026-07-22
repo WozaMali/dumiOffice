@@ -48,6 +48,22 @@ CREATE TABLE IF NOT EXISTS scent_proforma_lines (
 CREATE INDEX IF NOT EXISTS idx_scent_proforma_lines_proforma
   ON scent_proforma_lines(proforma_id);
 
+-- 3b) Pro-forma packaging / extra lines (bottles, print, ethanol, pump, cap)
+CREATE TABLE IF NOT EXISTS scent_proforma_extra_lines (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  proforma_id UUID NOT NULL REFERENCES scent_proformas(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL
+    CHECK (kind IN ('bottle', 'print_fee', 'ethanol', 'pump', 'cap')),
+  name TEXT NOT NULL,
+  spec TEXT,
+  qty NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (qty >= 0),
+  line_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scent_proforma_extra_lines_proforma
+  ON scent_proforma_extra_lines(proforma_id);
+
 -- 4) Packaging master data
 CREATE TABLE IF NOT EXISTS fragrance_bottle_products (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -90,6 +106,7 @@ CREATE TABLE IF NOT EXISTS perfume_cap_products (
 ALTER TABLE scent_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scent_proformas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scent_proforma_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scent_proforma_extra_lines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fragrance_bottle_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE perfume_pump_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE perfume_cap_products ENABLE ROW LEVEL SECURITY;
@@ -121,6 +138,15 @@ BEGIN
   ) THEN
     CREATE POLICY "Allow all on scent_proforma_lines"
       ON scent_proforma_lines FOR ALL USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'scent_proforma_extra_lines'
+      AND policyname = 'Allow all on scent_proforma_extra_lines'
+  ) THEN
+    CREATE POLICY "Allow all on scent_proforma_extra_lines"
+      ON scent_proforma_extra_lines FOR ALL USING (true);
   END IF;
 
   IF NOT EXISTS (

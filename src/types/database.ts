@@ -40,6 +40,7 @@ export interface Customer {
   loyalty_tier?: string;
   // Admin notes (Office only)
   admin_notes?: string;
+  price_tier_id?: string | null;
   // Legacy fields kept optional for flexibility
   tags?: string[];
   notes?: string;
@@ -611,6 +612,91 @@ export interface MarketingCampaign {
   click_rate: number | null;
   campaign_date: string | null; // YYYY-MM-DD
   revenue_impact: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Checkout discount coupon (shared with storefront validate_discount_coupon RPC) */
+export type DiscountCouponType = "percent" | "fixed";
+
+export interface DiscountCoupon {
+  id: string;
+  code: string;
+  label: string | null;
+  discount_type: DiscountCouponType;
+  discount_value: number;
+  min_subtotal: number;
+  max_discount: number | null;
+  is_active: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  usage_limit: number | null;
+  usage_count: number;
+  per_client_limit: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DiscountCouponRedemption {
+  id: string;
+  coupon_id: string;
+  store_order_id: string | null;
+  client_id: string | null;
+  code_snapshot: string;
+  discount_amount: number;
+  subtotal_amount: number | null;
+  created_at: string;
+}
+
+/** Trade / reseller price book */
+export type PriceTierCode = "retail" | "stock" | "key_account" | string;
+
+export interface PriceTier {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  default_discount_percent: number;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductTierPrice {
+  id: string;
+  product_id: string;
+  tier_id: string;
+  price_30ml: number | null;
+  price_50ml: number | null;
+  price_100ml: number | null;
+  price_200ml: number | null;
+  unit_price: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ResellerAccountStatus = "pending" | "approved" | "suspended";
+
+export interface ResellerAccount {
+  id: string;
+  customer_id: string | null;
+  business_name: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  vat_number: string | null;
+  address_line: string | null;
+  city: string | null;
+  province: string | null;
+  postal_code: string | null;
+  status: ResellerAccountStatus;
+  price_tier_id: string | null;
+  payment_terms: string | null;
+  credit_limit: number | null;
+  moq_units: number | null;
+  notes: string | null;
+  approved_at: string | null;
   created_at: string;
   updated_at: string;
 }

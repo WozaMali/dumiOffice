@@ -9,6 +9,8 @@ export type OfficeRouteId =
   | "accounting"
   | "expenses"
   | "marketing"
+  | "coupons"
+  | "resellers"
   | "content"
   | "settings";
 
@@ -119,6 +121,22 @@ export const dumiOfficeConfig: DumiOfficeConfig = {
       description:
         "Plan campaigns, track touchpoints, and keep fragrance launches aligned with the house voice.",
       primaryTables: [],
+    },
+    {
+      id: "coupons",
+      label: "Coupons",
+      path: "/coupons",
+      description:
+        "Create and manage checkout discount codes shared with the DumiEssence storefront.",
+      primaryTables: ["discount_coupons", "discount_coupon_redemptions"],
+    },
+    {
+      id: "resellers",
+      label: "Resellers",
+      path: "/resellers",
+      description:
+        "Onboard trade partners, assign stock/key-account tiers, and maintain the reseller price book.",
+      primaryTables: ["reseller_accounts", "price_tiers", "product_tier_prices"],
     },
     {
       id: "content",

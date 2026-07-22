@@ -19,14 +19,18 @@ import type {
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import {
-  createPdfDoc,
-  DUMI_LOGO_PATH,
-  drawPdfLetterhead,
-  loadPdfLetterheadAssets,
-} from "@/lib/utils/pdf-letterhead";
+  createBrandedPdfContext,
+  pdfEnsureSpace,
+  pdfInfoPanel,
+  pdfMoney,
+  pdfOpenPage,
+  pdfSectionLabel,
+  pdfTableHeader,
+  pdfTableRow,
+  pdfTotalsBox,
+  type PdfColumn,
+} from "@/lib/utils/pdf-document-kit";
 import { ensureDeOrderExpenseFromProforma } from "@/lib/utils/de-order-expenses";
-
-const NEW_LOGO_PATH = DUMI_LOGO_PATH;
 const IN_PROGRESS_SUFFIX = " (In progress)";
 const isInProgressProforma = (pf: Pick<ScentProforma, "name">) =>
   (pf.name || "").toLowerCase().includes(IN_PROGRESS_SUFFIX.trim().toLowerCase());
@@ -1823,45 +1827,20 @@ const OilsPage = () => {
     const extrasForPdf = proformaOverride
       ? await fragranceApi.listProformaExtras(targetProformaId)
       : selectedProformaExtras;
-    const doc = await createPdfDoc({
+    const ctx = await createBrandedPdfContext({
       orientation: orientation === "landscape" ? "landscape" : "portrait",
+      tagline: "Fragrance & packaging solutions",
     });
+    const { doc, margin, pageWidth } = ctx;
 
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 15;
-    const lineHeight = 6;
-
-    const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets(NEW_LOGO_PATH);
-    const oilsTagline = "Fragrance & packaging solutions";
-    const letterheadOpts = { margin, tagline: oilsTagline, socialIcons };
-    const drawContinuationLetterhead = () =>
-      drawPdfLetterhead(doc, logoImg, { ...letterheadOpts, compact: true, socialIcons: undefined });
-
-    drawPdfLetterhead(doc, logoImg, letterheadOpts);
-
-    // Document title and meta (match Pro-Forma tab export)
-    doc.setTextColor(40, 40, 40);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("Oils & Containers Purchase List", margin, 58);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
     const createdDate =
       targetProforma.proforma_date ||
       new Date(targetProforma.created_at).toISOString().slice(0, 10);
-    doc.text(
-      `Reference: ${targetProforma.reference || "—"} · Pro-forma date: ${createdDate}`,
-      margin,
-      64,
-    );
     const invoiceLine = targetProforma.invoice_date
       ? `Invoice date: ${targetProforma.invoice_date}`
       : "Invoice date: —";
-    doc.text(invoiceLine, margin, 69);
 
-    // Supplier / vendor (order history) — right column, aligned with document meta
+    // Supplier / vendor (order history)
     const historyVendor =
       vendors.find((v) => v.id === targetProforma.vendor_id) ??
       vendors.find(
@@ -1870,7 +1849,6 @@ const OilsPage = () => {
           (targetProforma.customer_name || "").trim(),
       );
 
-    const rightX = pageWidth - margin;
     const rightColWidth = (pageWidth - 2 * margin) * 0.48;
     const pushVendorLines = (out: string[], line: string) => {
       const wrapped = doc.splitTextToSize(line, rightColWidth);
@@ -1928,185 +1906,61 @@ const OilsPage = () => {
       }
     }
 
-    let yRight = 57;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(40, 40, 40);
-    doc.text("Supplier (vendor details)", rightX, yRight, { align: "right" });
-    yRight += 5.5;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    supplierLines.forEach((line) => {
-      doc.text(line, rightX, yRight, { align: "right" });
-      yRight += 4.2;
+    pdfOpenPage(ctx, {
+      title: "DE Order",
+      subtitle: targetProforma.reference || undefined,
+      metaLeft: [
+        `Pro-forma date: ${createdDate}`,
+        invoiceLine,
+      ],
     });
-    yRight += 2;
 
-    const yLeftEnd = 69;
-    // Tables start below the lower of: left metadata block, right vendor block
-    let contentY = Math.max(yLeftEnd, yRight) + 3;
+    if (supplierLines.length) {
+      pdfInfoPanel(ctx, {
+        title: "Supplier (vendor details)",
+        leftLines: supplierLines,
+        fill: "light",
+      });
+    }
 
-    const ensureSpace = (neededHeight: number) => {
-      const bottomMargin = pageHeight - 20;
-      if (contentY + neededHeight > bottomMargin) {
-        doc.addPage();
-        contentY = drawContinuationLetterhead();
-      }
-    };
-
-    // Table layout (Excel-style)
-    const tableX = margin;
     const tableWidth = pageWidth - margin * 2;
-    const col1Width = tableWidth * 0.4;
-    const col2Width = tableWidth * 0.3;
-    const col3Width = tableWidth * 0.15;
-    const col4Width = tableWidth * 0.15;
-    const colX1 = tableX;
-    const colX2 = tableX + col1Width;
-    const colX3 = colX2 + col2Width;
-    const colX4 = colX3 + col3Width;
-    const rowHeight = 5;
-    const titleRowHeight = 6;
+    const cols4: PdfColumn[] = [
+      { label: "Product", width: tableWidth * 0.4 },
+      { label: "Inspired / Designer", width: tableWidth * 0.3 },
+      { label: "Size & qty", width: tableWidth * 0.15 },
+      { label: "Row total", width: tableWidth * 0.15, align: "right" },
+    ];
+    const cols5: PdfColumn[] = [
+      { label: "Product / item", width: tableWidth * 0.26 },
+      { label: "Spec", width: tableWidth * 0.24 },
+      { label: "Unit price", width: tableWidth * 0.16, align: "right" },
+      { label: "Qty", width: tableWidth * 0.1, align: "right" },
+      { label: "Line total", width: tableWidth * 0.24, align: "right" },
+    ];
 
     const drawTableSection = (
-      title: string,
-      headers: [string, string, string, string],
-      rows: { c1: string; c2: string; c3: string; c4: string }[],
-    ) => {
-      // Do not render unselected/empty sections in exports.
-      if (rows.length === 0) return;
-      // Section title as the top row of the same table (full-width band, no gap above column headers)
-      ensureSpace(titleRowHeight + rowHeight + 2);
-      let yTop = contentY;
-      doc.setDrawColor(200, 170, 90);
-      doc.setFillColor(240, 236, 224);
-      doc.rect(tableX, yTop, tableWidth, titleRowHeight, "FD");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(40, 40, 40);
-      doc.text(title, tableX + 2, yTop + 4.2);
-      contentY += titleRowHeight;
-
-      // Column header row
-      ensureSpace(rowHeight + 2);
-      yTop = contentY;
-      let yText = yTop + 3.5;
-      doc.setDrawColor(200, 170, 90);
-      doc.setFillColor(245, 245, 245);
-      doc.rect(tableX, yTop, tableWidth, rowHeight, "F");
-      doc.line(colX2, yTop, colX2, yTop + rowHeight);
-      doc.line(colX3, yTop, colX3, yTop + rowHeight);
-      doc.line(colX4, yTop, colX4, yTop + rowHeight);
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(40, 40, 40);
-      doc.text(headers[0], colX1 + 2, yText);
-      doc.text(headers[1], colX2 + 2, yText);
-      doc.text(headers[2], colX3 + 2, yText);
-      doc.text(headers[3], colX4 + col4Width - 2, yText, { align: "right" });
-
-      contentY += rowHeight;
-
-      // Data rows
-      rows.forEach((row) => {
-        ensureSpace(rowHeight + 2);
-        yTop = contentY;
-        yText = yTop + 3.5;
-        doc.setDrawColor(220, 220, 220);
-        doc.rect(tableX, yTop, tableWidth, rowHeight);
-        doc.line(colX2, yTop, colX2, yTop + rowHeight);
-        doc.line(colX3, yTop, colX3, yTop + rowHeight);
-        doc.line(colX4, yTop, colX4, yTop + rowHeight);
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(7);
-        doc.setTextColor(40, 40, 40);
-        doc.text(row.c1, colX1 + 2, yText);
-        if (row.c2) doc.text(row.c2, colX2 + 2, yText);
-        if (row.c3) doc.text(row.c3, colX3 + 2, yText);
-        if (row.c4)
-          doc.text(row.c4, colX4 + col4Width - 2, yText, { align: "right" });
-
-        contentY += rowHeight;
-      });
-
-      contentY += 3;
-    };
-
-    // Materials / extras: Product, Spec, Unit price, Qty, Line total
-    const w5 = [0.26, 0.24, 0.16, 0.1, 0.24] as const;
-    const col5: number[] = [tableX];
-    w5.forEach((p) => {
-      col5.push(col5[col5.length - 1] + p * tableWidth);
-    });
-
-    const drawTableSection5 = (
-      title: string,
-      headers: [string, string, string, string, string],
-      rows: { c1: string; c2: string; c3: string; c4: string; c5: string }[],
+      title: string | null,
+      cols: PdfColumn[],
+      rows: { c1: string; c2: string; c3: string; c4: string; c5?: string }[],
     ) => {
       if (rows.length === 0) return;
-      ensureSpace(titleRowHeight + rowHeight + 2);
-      let yTop = contentY;
-      doc.setDrawColor(200, 170, 90);
-      doc.setFillColor(240, 236, 224);
-      doc.rect(tableX, yTop, tableWidth, titleRowHeight, "FD");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(40, 40, 40);
-      doc.text(title, tableX + 2, yTop + 4.2);
-      contentY += titleRowHeight;
-
-      ensureSpace(rowHeight + 2);
-      yTop = contentY;
-      let yText = yTop + 3.5;
-      doc.setDrawColor(200, 170, 90);
-      doc.setFillColor(245, 245, 245);
-      doc.rect(tableX, yTop, tableWidth, rowHeight, "F");
-      for (let k = 1; k <= 4; k++) {
-        doc.line(col5[k], yTop, col5[k], yTop + rowHeight);
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(40, 40, 40);
-      doc.text(headers[0], col5[0] + 2, yText);
-      doc.text(headers[1], col5[1] + 2, yText);
-      doc.text(headers[2], col5[3] - 2, yText, { align: "right" });
-      doc.text(headers[3], col5[4] - 2, yText, { align: "right" });
-      doc.text(headers[4], col5[5] - 2, yText, { align: "right" });
-
-      contentY += rowHeight;
-
-      rows.forEach((row) => {
-        ensureSpace(rowHeight + 2);
-        yTop = contentY;
-        yText = yTop + 3.5;
-        doc.setDrawColor(220, 220, 220);
-        doc.rect(tableX, yTop, tableWidth, rowHeight);
-        for (let k = 1; k <= 4; k++) {
-          doc.line(col5[k], yTop, col5[k], yTop + rowHeight);
-        }
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(7);
-        doc.setTextColor(40, 40, 40);
-        doc.text(row.c1, col5[0] + 2, yText);
-        if (row.c2) doc.text(row.c2, col5[1] + 2, yText);
-        if (row.c3) {
-          doc.text(row.c3, col5[3] - 2, yText, { align: "right" });
-        }
-        if (row.c4) {
-          doc.text(row.c4, col5[4] - 2, yText, { align: "right" });
-        }
-        if (row.c5) {
-          doc.text(row.c5, col5[5] - 2, yText, { align: "right" });
-        }
-        contentY += rowHeight;
+      // Reserve heading + column header + first row together (avoids orphan headers)
+      pdfEnsureSpace(ctx, title ? 22 : 18);
+      if (title) pdfSectionLabel(ctx, title);
+      const drawHeader = () => pdfTableHeader(ctx, cols);
+      drawHeader();
+      rows.forEach((row, idx) => {
+        pdfEnsureSpace(ctx, 10, () => {
+          if (title) pdfSectionLabel(ctx, `${title} (cont.)`);
+          drawHeader();
+        });
+        const values =
+          cols.length === 5
+            ? [row.c1, row.c2, row.c3, row.c4, row.c5 ?? ""]
+            : [row.c1, row.c2, row.c3, row.c4];
+        pdfTableRow(ctx, cols, values, { zebra: idx % 2 === 1 });
       });
-
-      contentY += 3;
+      ctx.y += 1;
     };
 
     // Build rows from stored pro-forma lines (match Pro-Forma scent section)
@@ -2149,11 +2003,7 @@ const OilsPage = () => {
       })
       .filter((l): l is NonNullable<typeof l> => l !== null);
 
-    drawTableSection(
-      "Scents (Pro-Forma)",
-      ["Product", "Inspired / Designer", "Size & qty", "Row total"],
-      scentRows,
-    );
+    drawTableSection("Scents", cols4, scentRows);
 
     const extraLineIsComplete = (e: ScentProformaExtraLine) => {
       const q = Number(e.qty ?? 0) || 0;
@@ -2184,34 +2034,14 @@ const OilsPage = () => {
     const capRows = extrasOfKind("cap");
     const printRows = extrasOfKind("print_fee");
 
-    const matHeaders5: [string, string, string, string, string] = [
-      "Product / item",
-      "Spec",
-      "Unit price",
-      "Qty",
-      "Line total",
-    ];
-
-    if (bottleRows.length) {
-      drawTableSection5("Fragrance bottles", matHeaders5, bottleRows);
-    }
-
-    if (ethanolRowsPdf.length) {
-      drawTableSection5("Scentech Ethanol", matHeaders5, ethanolRowsPdf);
-    }
-
-    if (pumpRows.length) {
-      drawTableSection5("Perfume pumps", matHeaders5, pumpRows);
-    }
-
-    if (capRows.length) {
-      drawTableSection5("Perfume caps", matHeaders5, capRows);
-    }
-
-    // Extras should always render last.
-    if (printRows.length) {
-      drawTableSection5("Extras", matHeaders5, printRows);
-    }
+    // One continuous packaging table — no per-category headings
+    drawTableSection(null, cols5, [
+      ...bottleRows,
+      ...ethanolRowsPdf,
+      ...pumpRows,
+      ...capRows,
+      ...printRows,
+    ]);
 
     // Summary box: Scents subtotal, Other materials, Subtotal, Total (incl. VAT)
     // Subtotals match lines shown in the PDF tables (qty + price required).
@@ -2245,40 +2075,12 @@ const OilsPage = () => {
     const totalInclVat =
       Number(targetProforma.total ?? subtotalPdf) || subtotalPdf;
 
-    const boxWidth = 70;
-    const boxHeight = 4 * lineHeight + 12;
-    const boxX = pageWidth - margin - boxWidth;
-    const bottomMargin = 20;
-    let boxY = pageHeight - bottomMargin - boxHeight;
-
-    if (contentY + 10 > boxY) {
-      doc.addPage();
-      contentY = drawContinuationLetterhead();
-      boxY = pageHeight - bottomMargin - boxHeight;
-    }
-
-    doc.setDrawColor(200, 170, 90);
-    doc.rect(boxX, boxY, boxWidth, boxHeight);
-
-    let summaryY = boxY + 8;
-    const addSummaryLine = (label: string, value: string, bold = false) => {
-      doc.setFont("helvetica", bold ? "bold" : "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(40, 40, 40);
-      doc.text(label, boxX + 3, summaryY);
-      doc.text(value, boxX + boxWidth - 3, summaryY, {
-        align: "right",
-      });
-      summaryY += lineHeight;
-    };
-
-    addSummaryLine("Scents subtotal", `R${scentsSubtotalPdf.toFixed(2)}`);
-    addSummaryLine(
-      "Other materials",
-      `R${extrasSubtotalPdf.toFixed(2)}`,
-    );
-    addSummaryLine("Subtotal", `R${subtotalPdf.toFixed(2)}`);
-    addSummaryLine("Total (incl. VAT)", `R${totalInclVat.toFixed(2)}`, true);
+    pdfTotalsBox(ctx, [
+      { label: "Scents subtotal", value: pdfMoney(scentsSubtotalPdf) },
+      { label: "Other materials", value: pdfMoney(extrasSubtotalPdf) },
+      { label: "Subtotal", value: pdfMoney(subtotalPdf) },
+      { label: "Total (incl. VAT)", value: pdfMoney(totalInclVat), bold: true },
+    ]);
 
     doc.save(`purchase-history-${targetProforma.id}.pdf`);
   };
@@ -2288,39 +2090,20 @@ const OilsPage = () => {
     lines: any[],
     orientation: "landscape" | "portrait" = "landscape",
   ) => {
-    const doc = await createPdfDoc({
+    const ctx = await createBrandedPdfContext({
       orientation: orientation === "portrait" ? "portrait" : "landscape",
+      tagline: "Fragrance & packaging solutions",
     });
 
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 15;
+    pdfOpenPage(ctx, {
+      title: "DE Order",
+      subtitle: proforma.reference || undefined,
+      metaLeft: [
+        `Created: ${new Date(proforma.proforma_date || proforma.created_at).toLocaleString()}`,
+      ],
+    });
 
-    const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets(NEW_LOGO_PATH);
-    const oilsTagline = "Fragrance & packaging solutions";
-    const letterheadOpts = { margin, tagline: oilsTagline, socialIcons };
-    const drawContinuationLetterhead = () =>
-      drawPdfLetterhead(doc, logoImg, { ...letterheadOpts, compact: true, socialIcons: undefined });
-
-    drawPdfLetterhead(doc, logoImg, letterheadOpts);
-
-    // Title + meta
-    doc.setTextColor(40, 40, 40);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("Fragrance Purchase Pro-Forma", margin, 58);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(
-      `Created: ${new Date(proforma.proforma_date || proforma.created_at).toLocaleString()}`,
-      margin,
-      64,
-    );
-
-    // Table layout
-    const tableTop = 72;
-    const rowH = 7;
+    const printableWidth = ctx.pageWidth - ctx.margin * 2;
     const col = {
       brand: 32,
       item: 78,
@@ -2332,77 +2115,23 @@ const OilsPage = () => {
     };
     const maxTableWidth =
       col.brand + col.item + col.q1 + col.q5 + col.q2 + col.qh + col.total;
-
-    // If we ever change column widths, keep it within the printable area
-    const printableWidth = pageWidth - margin * 2;
     const scale = maxTableWidth > printableWidth ? printableWidth / maxTableWidth : 1;
 
-    const w = {
-      brand: col.brand * scale,
-      item: col.item * scale,
-      q1: col.q1 * scale,
-      q5: col.q5 * scale,
-      q2: col.q2 * scale,
-      qh: col.qh * scale,
-      total: col.total * scale,
-    };
+    const cols: PdfColumn[] = [
+      { label: "Brand", width: col.brand * scale },
+      { label: "Item", width: col.item * scale },
+      { label: "Qty 1kg", width: col.q1 * scale, align: "right" },
+      { label: "Qty 500g", width: col.q5 * scale, align: "right" },
+      { label: "Qty 200g", width: col.q2 * scale, align: "right" },
+      { label: "Qty 100g", width: col.qh * scale, align: "right" },
+      { label: "Row total", width: col.total * scale, align: "right" },
+    ];
 
-    const drawHeader = (y: number) => {
-      doc.setFillColor(245, 245, 245);
-      doc.rect(margin, y, printableWidth, rowH, "F");
-      doc.setDrawColor(220, 220, 220);
-      doc.rect(margin, y, printableWidth, rowH);
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(80, 80, 80);
-
-      let x = margin + 2;
-      doc.text("Brand", x, y + 5);
-      x += w.brand;
-      doc.text("Item", x + 2, y + 5);
-      x += w.item;
-      doc.text("Qty 1kg", x + w.q1 - 2, y + 5, { align: "right" });
-      x += w.q1;
-      doc.text("Qty 500g", x + w.q5 - 2, y + 5, { align: "right" });
-      x += w.q5;
-      doc.text("Qty 200g", x + w.q2 - 2, y + 5, { align: "right" });
-      x += w.q2;
-      doc.text("Qty 100g", x + w.qh - 2, y + 5, { align: "right" });
-      x += w.qh;
-      doc.text("Row total", x + w.total - 2, y + 5, { align: "right" });
-    };
-
-    const ellipsize = (text: string, maxWidth: number) => {
-      if (!text) return "";
-      if (doc.getTextWidth(text) <= maxWidth) return text;
-      let t = text;
-      while (t.length > 0 && doc.getTextWidth(`${t}…`) > maxWidth) {
-        t = t.slice(0, -1);
-      }
-      return `${t}…`;
-    };
-
-    let y = tableTop;
-    drawHeader(y);
-    y += rowH;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(30, 30, 30);
+    const drawHeader = () => pdfTableHeader(ctx, cols);
+    drawHeader();
 
     lines.forEach((line, idx) => {
-      if (y + rowH + 30 > pageHeight - margin) {
-        doc.addPage();
-        y = drawContinuationLetterhead();
-        drawHeader(y);
-        y += rowH;
-      }
-
-      if (idx % 2 === 1) {
-        doc.setFillColor(252, 252, 252);
-        doc.rect(margin, y, printableWidth, rowH, "F");
-      }
+      pdfEnsureSpace(ctx, 14, drawHeader);
 
       const brand = line.scent_products?.brand ?? "—";
       const item = line.scent_products?.item ?? "—";
@@ -2412,42 +2141,29 @@ const OilsPage = () => {
       const qtyh = Number(line.qty_100g ?? 0) || 0;
       const rowTotal = Number(line.row_total ?? 0) || 0;
 
-      let x = margin + 2;
-      doc.text(ellipsize(String(brand), w.brand - 4), x, y + 5);
-      x += w.brand;
-      doc.text(ellipsize(String(item), w.item - 4), x + 2, y + 5);
-      x += w.item;
-      doc.text(String(qty1 || ""), x + w.q1 - 2, y + 5, { align: "right" });
-      x += w.q1;
-      doc.text(String(qty5 || ""), x + w.q5 - 2, y + 5, { align: "right" });
-      x += w.q5;
-      doc.text(String(qty2 || ""), x + w.q2 - 2, y + 5, { align: "right" });
-      x += w.q2;
-      doc.text(String(qtyh || ""), x + w.qh - 2, y + 5, { align: "right" });
-      x += w.qh;
-      doc.text(`R${rowTotal.toFixed(2)}`, x + w.total - 2, y + 5, {
-        align: "right",
-      });
-
-      y += rowH;
+      pdfTableRow(
+        ctx,
+        cols,
+        [
+          String(brand),
+          String(item),
+          String(qty1 || ""),
+          String(qty5 || ""),
+          String(qty2 || ""),
+          String(qtyh || ""),
+          pdfMoney(rowTotal),
+        ],
+        { zebra: idx % 2 === 1 },
+      );
     });
 
-    // Totals block
-    const totalsY = Math.min(y + 10, pageHeight - margin - 20);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(40, 40, 40);
-    doc.text(`Subtotal: R${proforma.subtotal.toFixed(2)}`, infoX, totalsY, {
-      align: "right",
-    });
-    doc.text(`VAT (15%): R${proforma.vat.toFixed(2)}`, infoX, totalsY + 6, {
-      align: "right",
-    });
-    doc.text(`Total: R${proforma.total.toFixed(2)}`, infoX, totalsY + 12, {
-      align: "right",
-    });
+    pdfTotalsBox(ctx, [
+      { label: "Subtotal", value: pdfMoney(proforma.subtotal) },
+      { label: "VAT (15%)", value: pdfMoney(proforma.vat) },
+      { label: "Total", value: pdfMoney(proforma.total), bold: true },
+    ]);
 
-    doc.save(`proforma-${proforma.id}.pdf`);
+    ctx.doc.save(`proforma-${proforma.id}.pdf`);
   };
 
   const saveBottleProductsMutation = useMutation({
@@ -2671,130 +2387,58 @@ const OilsPage = () => {
   });
 
   const handleDownloadPdf = async (orientation: "portrait" | "landscape" = "landscape") => {
-    const doc = await createPdfDoc({
+    const ctx = await createBrandedPdfContext({
       orientation: orientation === "landscape" ? "landscape" : "portrait",
+      tagline: "Fragrance & packaging solutions",
+    });
+    const { doc, margin, pageWidth } = ctx;
+    const today = new Date().toISOString().slice(0, 10);
+
+    pdfOpenPage(ctx, {
+      title: "DE Order",
+      subtitle: "Draft purchase list",
+      metaLeft: [`Generated: ${today}`],
     });
 
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 15;
-    const lineHeight = 6;
+    const tableWidth = pageWidth - margin * 2;
 
-    const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets(NEW_LOGO_PATH);
-    const oilsTagline = "Fragrance & packaging solutions";
-    const letterheadOpts = { margin, tagline: oilsTagline, socialIcons };
-    const drawContinuationLetterhead = () =>
-      drawPdfLetterhead(doc, logoImg, { ...letterheadOpts, compact: true, socialIcons: undefined });
-
-    const renderDocument = () => {
-      drawPdfLetterhead(doc, logoImg, letterheadOpts);
-
-        // Document title and meta
-        doc.setTextColor(40, 40, 40);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(14);
-        doc.text("Oils & Containers Purchase List", margin, 58);
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        const today = new Date().toISOString().slice(0, 10);
-        doc.text(`Generated: ${today}`, margin, 64);
-
-      // Start content area below header
-      let contentY = 80;
-
-      const ensureSpace = (neededHeight: number) => {
-        const bottomMargin = pageHeight - 20;
-        if (contentY + neededHeight > bottomMargin) {
-          doc.addPage();
-          contentY = drawContinuationLetterhead();
-        }
-      };
-
-      // Table layout (Excel-style)
-      const tableX = margin;
-      const tableWidth = pageWidth - margin * 2;
-      const col1Width = tableWidth * 0.4;
-      const col2Width = tableWidth * 0.3;
-      const col3Width = tableWidth * 0.15;
-      const col4Width = tableWidth * 0.15;
-      const colX1 = tableX;
-      const colX2 = tableX + col1Width;
-      const colX3 = colX2 + col2Width;
-      const colX4 = colX3 + col3Width;
-      const rowHeight = 5;
-
-      const drawTableSection = (
-        title: string,
-        headers: [string, string, string, string],
-        rows: { c1: string; c2: string; c3: string; c4: string }[],
-      ) => {
-        // Do not render unselected/empty sections in exports.
-        if (rows.length === 0) return;
-        // Section heading
-        ensureSpace(rowHeight * 2);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(40, 40, 40);
-        doc.text(title, tableX, contentY);
-        contentY += rowHeight;
-
-        // Header row
-        ensureSpace(rowHeight + 2);
-        let yTop = contentY;
-        let yText = yTop + 3.5;
-        doc.setDrawColor(200, 170, 90);
-        doc.setFillColor(245, 245, 245);
-        doc.rect(tableX, yTop, tableWidth, rowHeight, "F");
-        doc.line(colX2, yTop, colX2, yTop + rowHeight);
-        doc.line(colX3, yTop, colX3, yTop + rowHeight);
-        doc.line(colX4, yTop, colX4, yTop + rowHeight);
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(7);
-        doc.setTextColor(40, 40, 40);
-        doc.text(headers[0], colX1 + 2, yText);
-        doc.text(headers[1], colX2 + 2, yText);
-        doc.text(headers[2], colX3 + 2, yText);
-        doc.text(headers[3], colX4 + col4Width - 2, yText, { align: "right" });
-
-        contentY += rowHeight;
-
-        // Data rows (only non-empty rows passed in)
-        rows.forEach((row) => {
-          ensureSpace(rowHeight + 2);
-          yTop = contentY;
-          yText = yTop + 3.5;
-          doc.setDrawColor(220, 220, 220);
-          doc.rect(tableX, yTop, tableWidth, rowHeight);
-          doc.line(colX2, yTop, colX2, yTop + rowHeight);
-          doc.line(colX3, yTop, colX3, yTop + rowHeight);
-          doc.line(colX4, yTop, colX4, yTop + rowHeight);
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(7);
-          doc.setTextColor(40, 40, 40);
-          doc.text(row.c1, colX1 + 2, yText);
-          if (row.c2) doc.text(row.c2, colX2 + 2, yText);
-          if (row.c3) doc.text(row.c3, colX3 + 2, yText);
-          if (row.c4)
-            doc.text(row.c4, colX4 + col4Width - 2, yText, { align: "right" });
-
-          contentY += rowHeight;
+    const drawTableSection = (
+      title: string | null,
+      labels: [string, string, string, string],
+      rows: { c1: string; c2: string; c3: string; c4: string }[],
+    ) => {
+      if (rows.length === 0) return;
+      const cols: PdfColumn[] = [
+        { label: labels[0], width: tableWidth * 0.4 },
+        { label: labels[1], width: tableWidth * 0.3 },
+        { label: labels[2], width: tableWidth * 0.15 },
+        { label: labels[3], width: tableWidth * 0.15, align: "right" },
+      ];
+      pdfEnsureSpace(ctx, title ? 22 : 18);
+      if (title) pdfSectionLabel(ctx, title);
+      const drawHeader = () => pdfTableHeader(ctx, cols);
+      drawHeader();
+      rows.forEach((row, idx) => {
+        pdfEnsureSpace(ctx, 10, () => {
+          if (title) pdfSectionLabel(ctx, `${title} (cont.)`);
+          drawHeader();
         });
+        pdfTableRow(ctx, cols, [row.c1, row.c2, row.c3, row.c4], {
+          zebra: idx % 2 === 1,
+        });
+      });
+      ctx.y += 1;
+    };
 
-        contentY += 3;
-      };
+    const toNumber = (value: string) => {
+      if (!value) return 0;
+      const cleaned = value.replace(/\s/g, "").replace(",", ".");
+      const num = Number(cleaned);
+      return Number.isFinite(num) ? num : 0;
+    };
 
-      const toNumber = (value: string) => {
-        if (!value) return 0;
-        const cleaned = value.replace(/\s/g, "").replace(",", ".");
-        const num = Number(cleaned);
-        return Number.isFinite(num) ? num : 0;
-      };
-
-      // 1) Scents (Pro-Forma)
-      const scentRows = proFormaRows
+    // 1) Scents (Pro-Forma)
+    const scentRows = proFormaRows
         .map((pfRow) => {
           const base =
             pfRow.productIndex !== null ? scentProducts[pfRow.productIndex] : undefined;
@@ -2831,14 +2475,14 @@ const OilsPage = () => {
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
-      drawTableSection(
-        "Scents (Pro-Forma)",
-        ["Product", "Inspired / Designer", "Size & qty", "Row total"],
-        scentRows,
-      );
+    drawTableSection(
+      "Scents",
+      ["Product", "Inspired / Designer", "Size & qty", "Row total"],
+      scentRows,
+    );
 
-      // 2) Bottles — only rows with a chosen quantity (PDF matches what you are ordering).
-      const bottleRows = bottles
+    // 2) Bottles — only rows with a chosen quantity (PDF matches what you are ordering).
+    const bottleRows = bottles
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
           if (toNumber(row.qty) <= 0) return null;
@@ -2856,10 +2500,8 @@ const OilsPage = () => {
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
-      drawTableSection("Fragrance bottles", ["Bottle", "Spec", "Qty", "Line total"], bottleRows);
-
-      // 4) Scentech Ethanol
-      const ethanolPdfRows = ethanolRows
+    // 4) Scentech Ethanol
+    const ethanolPdfRows = ethanolRows
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
           if (toNumber(row.qty) <= 0) return null;
@@ -2874,14 +2516,8 @@ const OilsPage = () => {
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
-      drawTableSection(
-        "Scentech Ethanol",
-        ["Name", "Liters", "Qty", "Line total"],
-        ethanolPdfRows,
-      );
-
-      // 5) Pumps
-      const pumpRows = pumps
+    // 5) Pumps
+    const pumpRows = pumps
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
           if (toNumber(row.qty) <= 0) return null;
@@ -2898,14 +2534,8 @@ const OilsPage = () => {
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
-      drawTableSection(
-        "Perfume pumps",
-        ["Pump", "Spec", "Qty", "Line total"],
-        pumpRows,
-      );
-
-      // 6) Caps
-      const capRows = caps
+    // 6) Caps
+    const capRows = caps
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
           if (toNumber(row.qty) <= 0) return null;
@@ -2922,10 +2552,8 @@ const OilsPage = () => {
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
-      drawTableSection("Perfume caps", ["Cap", "Spec", "Qty", "Line total"], capRows);
-
-      // 7) Extras (always last)
-      const printRows = printFees
+    // 7) Extras (always last)
+    const printRows = printFees
         .map((row) => {
           const totalAmount = amountValue(row.price, row.qty);
           if (toNumber(row.qty) <= 0) return null;
@@ -2941,51 +2569,31 @@ const OilsPage = () => {
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
 
-      drawTableSection(
-        "Extras",
-        ["Description", "Spec", "Qty", "Line total"],
-        printRows,
-      );
+    // One continuous packaging table — no Fragrance bottles / pumps / caps headings
+    const packagingRows = [
+      ...bottleRows,
+      ...ethanolPdfRows,
+      ...pumpRows,
+      ...capRows,
+      ...printRows,
+    ];
+    drawTableSection(
+      null,
+      ["Product / item", "Spec", "Qty", "Line total"],
+      packagingRows,
+    );
 
-      // Summary box with current totals at bottom-right of last page
-      const boxWidth = 80;
-      const boxHeight = lineHeight * 4 + 6;
-      const boxX = pageWidth - margin - boxWidth;
-      const bottomMargin = 20;
-      let boxY = pageHeight - bottomMargin - boxHeight;
+    pdfTotalsBox(ctx, [
+      { label: "Scents subtotal", value: pdfMoney(scentsSubtotal) },
+      {
+        label: "Other materials",
+        value: pdfMoney(bottlesSubtotal + pumpsSubtotal + capsSubtotal + printFeesSubtotal),
+      },
+      { label: "Subtotal", value: pdfMoney(subtotal) },
+      { label: "Total (incl. VAT)", value: pdfMoney(total), bold: true },
+    ]);
 
-      if (contentY > boxY - 10) {
-        // Not enough space on this page; move to new page
-        doc.addPage();
-        contentY = drawContinuationLetterhead();
-        boxY = pageHeight - bottomMargin - boxHeight;
-      }
-
-      doc.setDrawColor(200, 170, 90);
-      doc.rect(boxX, boxY, boxWidth, boxHeight);
-
-      let summaryY = boxY + 8;
-      const addSummaryLine = (label: string, value: string, bold = false) => {
-        doc.setFont("helvetica", bold ? "bold" : "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(40, 40, 40);
-        doc.text(label, boxX + 3, summaryY);
-        doc.text(value, boxX + boxWidth - 3, summaryY, { align: "right" });
-        summaryY += lineHeight;
-      };
-
-      addSummaryLine("Scents subtotal", `R${scentsSubtotal.toFixed(2)}`);
-      addSummaryLine(
-        "Other materials",
-        `R${(bottlesSubtotal + pumpsSubtotal + capsSubtotal + printFeesSubtotal).toFixed(2)}`,
-      );
-      addSummaryLine("Subtotal", `R${subtotal.toFixed(2)}`);
-      addSummaryLine("Total (incl. VAT)", `R${total.toFixed(2)}`, true);
-
-      doc.save("dumi-essence-oils-list.pdf");
-    };
-
-    renderDocument();
+    doc.save("dumi-essence-oils-list.pdf");
   };
 
   return (

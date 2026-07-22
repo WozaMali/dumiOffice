@@ -1,9 +1,15 @@
 import type { Product } from "@/types/database";
 import {
-  createPdfDoc,
-  drawPdfLetterhead,
-  loadPdfLetterheadAssets,
-} from "@/lib/utils/pdf-letterhead";
+  createBrandedPdfContext,
+  pdfEnsureSpace,
+  pdfFooterNote,
+  pdfMoney,
+  pdfOpenPage,
+  pdfSectionLabel,
+  pdfTableHeader,
+  pdfTableRow,
+  type PdfColumn,
+} from "@/lib/utils/pdf-document-kit";
 
 function getStatus(p: Product, inStockNow: number): string {
   if (!p.is_active) return "Inactive";
@@ -19,29 +25,19 @@ function normalizeLineRaw(raw: string | undefined | null): string {
 }
 
 function getInventoryGroup(p: Product): { key: string; label: string } {
-  // Keep the same idea as `Content.tsx` but use inventory-friendly fields.
   if (p.product_category === "Diffuser") return { key: "diffusers", label: "Diffusers" };
-  if (p.product_category === "Car Perfume")
-    return { key: "carPerfume", label: "Car Perfume" };
-  if (p.product_category === "Shower Gel")
-    return { key: "showerGel", label: "Shower Gel" };
-  if (p.product_category === "Body Lotion")
-    return { key: "bodyLotion", label: "Body Lotion" };
-  if (p.product_category === "Body Oil")
-    return { key: "bodyOil", label: "Body Oil" };
+  if (p.product_category === "Car Perfume") return { key: "carPerfume", label: "Car Perfume" };
+  if (p.product_category === "Shower Gel") return { key: "showerGel", label: "Shower Gel" };
+  if (p.product_category === "Body Lotion") return { key: "bodyLotion", label: "Body Lotion" };
+  if (p.product_category === "Body Oil") return { key: "bodyOil", label: "Body Oil" };
 
-  // Prefer the inventory "item" field since your export shows ITEM values like
-  // "Men", "Female", and "Unisex".
   const itemNorm = normalizeLineRaw(p.item);
   if (itemNorm.includes("unisex")) return { key: "unisex", label: "Unisex Line" };
-  // IMPORTANT: check Women/Female before Men/Male.
-  // "women" contains "men" after normalization, so matching "men" first mis-groups women into Men's Line.
   if (itemNorm.includes("female") || itemNorm.includes("women"))
     return { key: "womens", label: "Women's Line" };
   if (itemNorm.includes("male") || itemNorm.includes("men"))
     return { key: "mens", label: "Men's Line" };
 
-  // Fallback to other metadata used by the storefront/content editor.
   const raw =
     p.product_type ||
     p.collection_code ||
@@ -55,115 +51,38 @@ function getInventoryGroup(p: Product): { key: string; label: string } {
   return { key: "other", label: "Other" };
 }
 
-const truncate = (s: string, maxLen: number) =>
-  s.length > maxLen ? s.slice(0, Math.max(0, maxLen - 2)) + ".." : s;
-
 export async function generateInventoryPDF(
   products: Product[],
   options?: {
     soldToDateByProductId?: Record<string, number>;
   },
 ): Promise<void> {
-  const doc = await createPdfDoc({ orientation: "landscape" });
+  const ctx = await createBrandedPdfContext({
+    orientation: "landscape",
+    tagline: "Inventory & stock posture",
+  });
   const soldToDateByProductId = options?.soldToDateByProductId ?? {};
-
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 15;
-  const tableWidth = pageWidth - margin * 2;
-
-  const rowHeight = 6;
-  const bottomMargin = pageHeight - 22;
-
-  const { logo: logoImg, socialIcons } = await loadPdfLetterheadAssets();
   const generated = new Date().toISOString().slice(0, 10);
 
-  const drawLetterhead = (compact = false) => {
-    const contentStart = drawPdfLetterhead(doc, logoImg, {
-      margin,
-      compact,
-      socialIcons: compact ? undefined : socialIcons,
-    });
-    if (compact) return contentStart;
+  pdfOpenPage(ctx, {
+    title: "Inventory Report",
+    subtitle: "Stock on hand by product line",
+    metaLeft: [`Generated: ${generated}`],
+    metaRight: [`${products.length} products`],
+  });
 
-    doc.setTextColor(40, 40, 40);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("Inventory Report", margin, 55);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Generated: ${generated}`, margin, 61);
-    doc.text(`${products.length} products`, pageWidth - margin, 61, { align: "right" });
-
-    return 70;
-  };
-
-  // Column model: fixed boundaries so text never overlaps.
-  const colModelDesired = [
-    { key: "product_name", label: "DE NAME", width: 155, align: "left" as const, maxLen: 18 },
-    { key: "brand", label: "BRAND", width: 88, align: "left" as const, maxLen: 10 },
-    { key: "item", label: "ITEM", width: 88, align: "left" as const, maxLen: 12 },
-    { key: "inspired_by", label: "INSPIRED BY", width: 122, align: "left" as const, maxLen: 14 },
-    { key: "designer", label: "DESIGNER", width: 92, align: "left" as const, maxLen: 10 },
-    { key: "price", label: "PRICE", width: 70, align: "right" as const, maxLen: 12 },
-    // Keep wording short in compact PDF table to avoid overlap.
-    { key: "stock_to_date", label: "STOCK DATE", width: 86, align: "right" as const, maxLen: 10 },
-    { key: "sold_to_date", label: "SOLD DATE", width: 82, align: "right" as const, maxLen: 10 },
-    { key: "in_stock_now", label: "IN STOCK", width: 82, align: "right" as const, maxLen: 10 },
-    { key: "status", label: "STATUS", width: 92, align: "right" as const, maxLen: 12 },
+  const cols: PdfColumn[] = [
+    { label: "DE name", width: 48 },
+    { label: "Brand", width: 28 },
+    { label: "Item", width: 24 },
+    { label: "Inspired by", width: 36 },
+    { label: "Price", width: 22, align: "right" },
+    { label: "Stock", width: 18, align: "right" },
+    { label: "Sold", width: 18, align: "right" },
+    { label: "In stock", width: 20, align: "right" },
+    { label: "Status", width: 28, align: "right" },
   ];
 
-  const scale = tableWidth / colModelDesired.reduce((sum, c) => sum + c.width, 0);
-  const colModel = colModelDesired.map((c) => ({ ...c, width: c.width * scale }));
-  const colX: Record<string, { x: number; w: number }> = {};
-  let accX = margin;
-  for (const c of colModel) {
-    colX[c.key] = { x: accX, w: c.width };
-    accX += c.width;
-  }
-
-  const drawTableHeader = () => {
-    const headerYTop = contentY;
-    const headerHeight = rowHeight + 2;
-
-    doc.setFillColor(20, 20, 20);
-    doc.rect(margin, headerYTop - 4, tableWidth, headerHeight, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(255, 255, 255);
-
-    // Header text baseline
-    const headerTextY = headerYTop + 1;
-
-    for (const c of colModel) {
-      const { x, w } = colX[c.key];
-      if (c.align === "right") {
-        doc.text(c.label, x + w - 2, headerTextY, { align: "right" });
-      } else {
-        doc.text(c.label, x + 2, headerTextY);
-      }
-    }
-
-    contentY += rowHeight + 4;
-
-    // Important: revert to the normal table text color for the rows.
-    doc.setTextColor(40, 40, 40);
-  };
-
-  let tableHeaderRendered = false;
-  let shouldRedrawGroupHeader = false;
-  const ensureSpace = (needed: number) => {
-    if (contentY + needed > bottomMargin) {
-      doc.addPage("a4", "l");
-      contentY = drawLetterhead(true);
-      // Force the table header to be re-drawn on the new page.
-      tableHeaderRendered = false;
-      shouldRedrawGroupHeader = true;
-    }
-  };
-
-  // Group products the way your Content editor does (Men/Women/Unisex/Diffuser...).
   const groups: { key: string; label: string; products: Product[] }[] = [
     { key: "mens", label: "Men's Line", products: [] },
     { key: "womens", label: "Women's Line", products: [] },
@@ -175,7 +94,6 @@ export async function generateInventoryPDF(
     { key: "bodyOil", label: "Body Oil", products: [] },
     { key: "other", label: "Other", products: [] },
   ];
-
   const groupIndexByKey = new Map(groups.map((g, i) => [g.key, i]));
   for (const p of products) {
     const g = getInventoryGroup(p);
@@ -183,66 +101,21 @@ export async function generateInventoryPDF(
     if (idx != null) groups[idx].products.push(p);
   }
 
-  let contentY = drawLetterhead();
-
-  // Table drawing state: each group renders a separate table (with header).
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(40, 40, 40);
-
+  let any = false;
   for (const group of groups) {
     if (group.products.length === 0) continue;
+    any = true;
 
-    // If the heading + table header + at least one row doesn't fit,
-    // push the whole group to a fresh page so we don't end up with:
-    // group title/header on page 1 but rows only on page 2.
-    const minGroupBlockHeight =
-      // group title line + padding
-      8 +
-      // table header bar + padding (matches drawTableHeader increments)
-      (rowHeight + 4) +
-      // first row height
-      rowHeight +
-      // safety padding
-      10;
-    if (contentY + minGroupBlockHeight > bottomMargin) {
-      doc.addPage("a4", "l");
-      contentY = drawLetterhead(true);
-      shouldRedrawGroupHeader = false;
-      tableHeaderRendered = false;
-    }
+    pdfEnsureSpace(ctx, 28, () => undefined);
+    pdfSectionLabel(ctx, group.label);
+    const drawHeader = () => pdfTableHeader(ctx, cols);
+    drawHeader();
 
-    // Group heading
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(40, 40, 40);
-    doc.text(group.label.toUpperCase(), margin, contentY);
-    contentY += 8;
-
-    // Table header for this group
-    drawTableHeader();
-    tableHeaderRendered = true;
-    shouldRedrawGroupHeader = false;
-
-    for (const p of group.products) {
-      ensureSpace(rowHeight + 2);
-
-      // If a page break happened mid-group, redraw heading + header before the row.
-      if (shouldRedrawGroupHeader) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(40, 40, 40);
-        doc.text(group.label.toUpperCase(), margin, contentY);
-        contentY += 8;
-        drawTableHeader();
-        tableHeaderRendered = true;
-        shouldRedrawGroupHeader = false;
-      }
-
-      if (!tableHeaderRendered) {
-        drawTableHeader();
-        tableHeaderRendered = true;
-      }
+    group.products.forEach((p, idx) => {
+      pdfEnsureSpace(ctx, 12, () => {
+        pdfSectionLabel(ctx, `${group.label} (cont.)`);
+        drawHeader();
+      });
 
       const priceNum = p.price ?? p.base_price ?? 0;
       const stockToDate = Math.max(0, Number(p.stock_on_hand ?? 0));
@@ -250,73 +123,31 @@ export async function generateInventoryPDF(
       const inStockNow = Math.max(0, stockToDate - soldToDate);
       const status = getStatus(p, inStockNow);
 
-      // Ensure row text is visible (header sets this to white).
-      doc.setTextColor(40, 40, 40);
+      pdfTableRow(
+        ctx,
+        cols,
+        [
+          p.product_name ?? "",
+          p.brand ?? "",
+          p.item ?? "",
+          p.inspired_by ?? "",
+          pdfMoney(priceNum),
+          String(stockToDate),
+          String(soldToDate),
+          String(inStockNow),
+          status,
+        ],
+        { zebra: idx % 2 === 1 },
+      );
+    });
 
-      for (const c of colModel) {
-        const { x, w } = colX[c.key];
-        let text = "";
-        switch (c.key) {
-          case "product_name":
-            text = truncate(p.product_name ?? "", c.maxLen);
-            break;
-          case "brand":
-            text = truncate(p.brand ?? "", c.maxLen);
-            break;
-          case "item":
-            text = truncate(p.item ?? "", c.maxLen);
-            break;
-          case "inspired_by":
-            text = truncate(p.inspired_by ?? "", c.maxLen);
-            break;
-          case "designer":
-            text = truncate(p.designer ?? "", c.maxLen);
-            break;
-          case "price":
-            text = `R${priceNum.toFixed(2)}`;
-            text = truncate(text, c.maxLen);
-            break;
-          case "stock_to_date":
-            text = truncate(String(stockToDate), c.maxLen);
-            break;
-          case "sold_to_date":
-            text = truncate(String(soldToDate), c.maxLen);
-            break;
-          case "in_stock_now":
-            text = truncate(String(inStockNow), c.maxLen);
-            break;
-          case "status":
-            text = truncate(status, c.maxLen);
-            break;
-          default:
-            text = "";
-        }
-
-        if (c.align === "right") {
-          doc.text(text, x + w - 2, contentY, { align: "right" });
-        } else {
-          doc.text(text, x + 2, contentY);
-        }
-      }
-
-      contentY += rowHeight;
-    }
-
-    // Space after group
-    contentY += 6;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
+    ctx.y += 4;
   }
 
-  // If we ended up with no rows (e.g. empty export), show a clear message.
-  const totalRows = groups.reduce((sum, g) => sum + g.products.length, 0);
-  if (totalRows === 0) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(130, 130, 130);
-    doc.text("No inventory items captured.", margin, contentY + 10);
+  if (!any) {
+    pdfSectionLabel(ctx, "No inventory items captured");
   }
 
-  const filename = `dumi-essence-inventory-${new Date().toISOString().slice(0, 10)}.pdf`;
-  doc.save(filename);
+  pdfFooterNote(ctx, "Dumi Essence inventory posture · For internal operations use.");
+  ctx.doc.save(`dumi-essence-inventory-${generated}.pdf`);
 }

@@ -74,7 +74,7 @@ export const downloadCSV = (csv: string, filename: string) => {
 };
 
 export const generateShippingLabels = (orders: Order[]): string => {
-  const trackingHref = (order: Order) =>
+  const track = (order: Order) =>
     order.tracking_url ||
     (order.tracking_number
       ? `https://www.google.com/search?q=${encodeURIComponent(
@@ -85,68 +85,58 @@ export const generateShippingLabels = (orders: Order[]): string => {
   const labelHTML = orders
     .map(
       (order) => `
-    <div style="page-break-after: always; padding: 18px; border: 2px solid #111; margin: 10px; border-radius: 14px; font-family: Inter, Arial, sans-serif;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 14px; border-bottom:1px solid #ddd; padding-bottom:10px;">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <img src="/Dumi Essence.png" alt="Dumi Essence" style="height:42px; width:auto; display:block;" />
+    <div class="label">
+      <div class="band">
+        <div class="brand">
+          <img src="/Dumi Essence.png" alt="" />
           <div>
-            <h1 style="margin: 0; font-size: 20px; letter-spacing:0.04em;">Dumi Essence</h1>
-            <p style="margin: 4px 0 0 0; font-size: 11px; color:#444;">Premium Fragrances · Shipping Label</p>
+            <div class="name">Dumi Essence</div>
+            <div class="tag">Shipping label · Dispatch</div>
           </div>
         </div>
-        <div style="text-align:right;">
-          <p style="margin:0; font-size:11px; color:#555;">${order.date}</p>
-          <p style="margin:4px 0 0 0; font-size:11px; color:#555;">Ref: ${order.reference}</p>
+        <div class="meta">
+          <div>${order.date}</div>
+          <div>Ref ${order.reference}</div>
+        </div>
+      </div>
+      <div class="gold"></div>
+
+      <div class="grid">
+        <div class="card">
+          <div class="eyebrow">Order</div>
+          <div><strong>ID</strong> ${order.id}</div>
+          <div><strong>Channel</strong> ${order.channel}</div>
+          <div><strong>Service</strong> ${order.shipping_method || "Standard"}</div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Shipment</div>
+          <div><strong>Courier</strong> ${order.courier || "Pending assignment"}</div>
+          <div><strong>Tracking</strong> ${order.tracking_number || "Pending"}</div>
+          ${track(order) ? `<div class="track">${track(order)}</div>` : ""}
         </div>
       </div>
 
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-        <div style="padding:10px; border:1px solid #ddd; border-radius:10px;">
-          <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">ORDER</p>
-          <p style="margin:0; font-size:13px;"><strong>ID:</strong> ${order.id}</p>
-          <p style="margin:4px 0 0 0; font-size:13px;"><strong>Channel:</strong> ${order.channel}</p>
-          <p style="margin:4px 0 0 0; font-size:13px;"><strong>Service:</strong> ${order.shipping_method || "Standard"}</p>
-        </div>
-        <div style="padding:10px; border:1px solid #ddd; border-radius:10px;">
-          <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">SHIPMENT</p>
-          <p style="margin:0; font-size:13px;"><strong>Courier:</strong> ${order.courier || "Pending assignment"}</p>
-          <p style="margin:4px 0 0 0; font-size:13px;"><strong>Tracking:</strong> ${order.tracking_number || "Pending"}</p>
-          ${
-            trackingHref(order)
-              ? `<p style="margin:4px 0 0 0; font-size:12px;"><strong>Track:</strong> ${trackingHref(order)}</p>`
-              : ""
-          }
-        </div>
-      </div>
-
-      <div style="margin-bottom: 12px; padding: 12px; background: #f6f6f6; border-radius:10px; border:1px solid #ddd;">
-        <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">SHIP TO</p>
-        <p style="margin:0; font-size:16px; font-weight:700;">${order.customer_name}</p>
-        <p style="margin:4px 0 0 0; font-size:13px; color:#222;">${order.customer_phone || ""}</p>
-        <p style="margin:4px 0 0 0; font-size:13px; line-height:1.4;">
-          ${(order as any).shipping_address || order.customer_address || ""}
-        </p>
+      <div class="ship">
+        <div class="eyebrow">Ship to</div>
+        <div class="who">${order.customer_name}</div>
+        <div class="contact">${order.customer_phone || ""}</div>
+        <div class="addr">${(order as { shipping_address?: string }).shipping_address || order.customer_address || ""}</div>
       </div>
 
       ${
         order.customer_notes
-          ? `
-      <div style="margin-bottom: 12px; padding: 10px; border:1px dashed #888; border-radius:10px;">
-        <p style="margin:0 0 6px 0; font-size:10px; letter-spacing:0.08em; color:#666;">DELIVERY NOTE</p>
-        <p style="margin:0; font-size:12px;">${order.customer_notes}</p>
-      </div>
-      `
+          ? `<div class="note"><div class="eyebrow">Delivery note</div><div>${order.customer_notes}</div></div>`
           : ""
       }
 
-      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-top:16px;">
+      <div class="foot">
         <div>
-          <p style="margin:0; font-size:10px; color:#666;">Packed with care by Dumi Essence</p>
-          <p style="margin:4px 0 0 0; font-size:10px; color:#666;">Need help? info@dumiessence.co.za · 072 849 5559</p>
+          <div>Packed with care by Dumi Essence</div>
+          <div class="muted">info@dumiessence.co.za · 072 849 5559</div>
         </div>
-        <div style="text-align:right; font-size:11px;">
-          <p style="margin:0; color:#666;">Amount</p>
-          <p style="margin:2px 0 0 0; font-size:15px; font-weight:700;">R${order.grand_total.toFixed(2)}</p>
+        <div class="amt">
+          <div class="muted">Amount</div>
+          <div class="total">R${order.grand_total.toFixed(2)}</div>
         </div>
       </div>
     </div>
@@ -154,23 +144,65 @@ export const generateShippingLabels = (orders: Order[]): string => {
     )
     .join("");
 
-  return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Shipping Labels - Dumi Essence</title>
-        <style>
-          body { font-family: Inter, Arial, sans-serif; margin: 0; padding: 20px; background:#fff; }
-          @media print {
-            body { margin: 0; padding: 0; }
-          }
-        </style>
-      </head>
-      <body>
-        ${labelHTML}
-      </body>
-    </html>
-  `;
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Shipping Labels - Dumi Essence</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 20px; background: #f3f1ec;
+      font-family: "Segoe UI", Georgia, "Times New Roman", serif;
+      color: #1c1c1c;
+    }
+    .label {
+      page-break-after: always;
+      background: #fff;
+      border: 1px solid #d8d4cc;
+      margin: 0 auto 16px;
+      max-width: 820px;
+      padding: 0 0 18px;
+      overflow: hidden;
+    }
+    .band {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; padding: 16px 20px; background: #141414; color: #fff;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { height: 40px; width: auto; display: block; }
+    .name { font-size: 18px; letter-spacing: 0.06em; font-weight: 700; }
+    .tag { margin-top: 3px; font-size: 11px; color: #c8c8c8; letter-spacing: 0.04em; }
+    .meta { text-align: right; font-size: 12px; color: #cfcfcf; line-height: 1.45; }
+    .gold { height: 3px; background: #c8aa5a; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 20px 0; }
+    .card, .ship, .note {
+      border: 1px solid #e5e1d8; border-radius: 2px; padding: 12px 14px; background: #faf9f6;
+    }
+    .ship { margin: 12px 20px 0; }
+    .note { margin: 12px 20px 0; border-style: dashed; }
+    .eyebrow {
+      font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+      color: #8a8478; margin-bottom: 8px; font-family: "Segoe UI", Arial, sans-serif;
+    }
+    .card div, .ship div { font-size: 13px; line-height: 1.45; font-family: "Segoe UI", Arial, sans-serif; }
+    .who { font-size: 18px !important; font-weight: 700; }
+    .contact, .addr, .track { color: #333; }
+    .track { word-break: break-all; font-size: 11px !important; margin-top: 4px; }
+    .foot {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      gap: 12px; margin: 18px 20px 0; font-family: "Segoe UI", Arial, sans-serif; font-size: 12px;
+    }
+    .muted { color: #777; margin-top: 3px; }
+    .amt { text-align: right; }
+    .total { font-size: 18px; font-weight: 700; color: #1c1c1c; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .label { border: none; margin: 0; max-width: none; }
+    }
+  </style>
+</head>
+<body>${labelHTML}</body>
+</html>`;
 };
 
 export const printLabels = (html: string) => {

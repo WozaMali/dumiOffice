@@ -15,6 +15,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Megaphone,
+  TicketPercent,
+  Handshake,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { dumiOfficeConfig, type OfficeRouteId } from "@/dumi-office.config";
@@ -31,6 +33,8 @@ const iconByRouteId: Record<OfficeRouteId, ComponentType<{ size?: number }>> = {
   accounting: Calculator,
   expenses: Receipt,
   marketing: Megaphone,
+  coupons: TicketPercent,
+  resellers: Handshake,
   content: Image,
   settings: Settings,
 };
