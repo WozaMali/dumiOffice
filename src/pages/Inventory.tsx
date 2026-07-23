@@ -16,6 +16,10 @@ import { PRODUCT_CATEGORY_OPTIONS, defaultCollectionCodeForCategory } from "@/li
 import { toast } from "sonner";
 import { downloadCSV, generateProductsCSV } from "@/lib/utils/bulk-actions";
 import { generateInventoryPDF } from "@/lib/utils/inventory-pdf";
+import {
+  generateClientPriceListExcel,
+  generateClientPriceListPdf,
+} from "@/lib/utils/client-price-list-pdf";
 import { supabase } from "@/lib/supabase";
 
 /** Line codes that map into Content → Fragrance products sections. */
@@ -167,6 +171,9 @@ const Inventory = () => {
   const [statusFilter, setStatusFilter] = useState<"all" | "inStock" | "lowStock" | "inactive">("all");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [priceListOpen, setPriceListOpen] = useState(false);
+  const [priceListPreparedFor, setPriceListPreparedFor] = useState("");
+  const [priceListBusy, setPriceListBusy] = useState<"pdf" | "excel" | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
   const [selectedScentId, setSelectedScentId] = useState<string>("");
@@ -660,6 +667,10 @@ const Inventory = () => {
               >
                 <Download className="h-4 w-4" />
                 Export PDF
+              </Button>
+              <Button variant="outline" onClick={() => setPriceListOpen(true)}>
+                <Download className="h-4 w-4" />
+                Download Price List
               </Button>
               <Button variant="outline" onClick={() => setAdjustmentPanelOpen((o) => !o)}>
                 Adjust stock
@@ -1243,6 +1254,80 @@ const Inventory = () => {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={priceListOpen}
+        onOpenChange={(open) => {
+          setPriceListOpen(open);
+          if (!open) setPriceListBusy(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Client price list</DialogTitle>
+            <DialogDescription>
+              Download a branded PDF or Excel list for clients. Optional: personalise with their name.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-2">
+              <Label htmlFor="price_list_prepared_for">Prepared for (optional)</Label>
+              <Input
+                id="price_list_prepared_for"
+                placeholder="e.g. Thandi Molefe / Boutique name"
+                value={priceListPreparedFor}
+                onChange={(e) => setPriceListPreparedFor(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Uses your current inventory filters · active products only · Mens / Womens / Unisex lines as on Content.
+            </p>
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              disabled={!!priceListBusy}
+              onClick={async () => {
+                setPriceListBusy("excel");
+                try {
+                  await generateClientPriceListExcel(filteredItems, {
+                    preparedFor: priceListPreparedFor,
+                  });
+                  toast.success("Price list Excel downloaded.");
+                  setPriceListOpen(false);
+                } catch (err: unknown) {
+                  toast.error((err as Error)?.message || "Failed to download Excel");
+                } finally {
+                  setPriceListBusy(null);
+                }
+              }}
+            >
+              <Download className="h-4 w-4" />
+              {priceListBusy === "excel" ? "Preparing…" : "Excel"}
+            </Button>
+            <Button
+              disabled={!!priceListBusy}
+              onClick={async () => {
+                setPriceListBusy("pdf");
+                try {
+                  await generateClientPriceListPdf(filteredItems, {
+                    preparedFor: priceListPreparedFor,
+                  });
+                  toast.success("Price list PDF downloaded.");
+                  setPriceListOpen(false);
+                } catch (err: unknown) {
+                  toast.error((err as Error)?.message || "Failed to download PDF");
+                } finally {
+                  setPriceListBusy(null);
+                }
+              }}
+            >
+              <Download className="h-4 w-4" />
+              {priceListBusy === "pdf" ? "Preparing…" : "PDF"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Adjust stock dialog */}
       <Dialog open={!!adjustingProduct} onOpenChange={(open) => !open && setAdjustingProduct(null)}>
         {adjustingProduct && (
@@ -1396,6 +1481,15 @@ const Inventory = () => {
           >
             <Download className="h-3.5 w-3.5" />
             Export PDF
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPriceListOpen(true)}
+            className="gap-1.5"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Price List
           </Button>
           <Button
             variant="outline"
