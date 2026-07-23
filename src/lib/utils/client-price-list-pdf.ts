@@ -1,4 +1,4 @@
-import type { Product } from "@/types/database";
+import type { BundleSpecialWithSlots, Product } from "@/types/database";
 import {
   createBrandedPdfContext,
   PDF,
@@ -23,6 +23,12 @@ import {
   groupContentProducts,
   type ContentProductGroupKey,
 } from "@/lib/utils/product-lines";
+import { bundleSpecialsApi } from "@/lib/api/bundleSpecials";
+import {
+  isBundleCurrentlyActive,
+  orderedBundleSlots,
+  totalPickCount,
+} from "@/lib/utils/bundleSpecials";
 
 const PRICE_HERO_PATH = "/price.png";
 const HERO_BAND_MM = 88;
@@ -224,13 +230,13 @@ function drawTitleBlock(
   pdfSetColor(doc, PDF.ink.gold, "draw");
   doc.setLineWidth(0.4);
   doc.line(margin, leftBottom, pageWidth - margin, leftBottom);
-  ctx.y = leftBottom + 5;
+  ctx.y = leftBottom + 4;
 }
 
 function drawContactStrip(ctx: PdfDocContext) {
   const { doc, margin, pageWidth } = ctx;
-  const h = 14;
-  pdfEnsureSpace(ctx, h + 4);
+  const h = 12;
+  pdfEnsureSpace(ctx, h + 3);
 
   pdfSetColor(doc, PDF.ink.panel, "fill");
   doc.roundedRect(margin, ctx.y, pageWidth - margin * 2, h, 1.5, 1.5, "F");
@@ -240,7 +246,7 @@ function drawContactStrip(ctx: PdfDocContext) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7);
   pdfSetColor(doc, PDF.ink.gold);
-  doc.text("ORDER", margin + 4, ctx.y + 4.5);
+  doc.text("ORDER", margin + 4, ctx.y + 4);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
@@ -248,32 +254,38 @@ function drawContactStrip(ctx: PdfDocContext) {
   doc.text(
     `${CONTACT.website}  ·  WhatsApp ${CONTACT.whatsapp}  ·  ${CONTACT.email}`,
     margin + 4,
-    ctx.y + 10,
+    ctx.y + 9,
   );
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   pdfSetColor(doc, PDF.ink.gold);
-  doc.text("Order online or WhatsApp", pageWidth - margin - 4, ctx.y + 8, {
+  doc.text("Order online or WhatsApp", pageWidth - margin - 4, ctx.y + 7, {
     align: "right",
   });
 
-  ctx.y += h + 6;
+  ctx.y += h + 10;
 }
 
-function drawSectionIntro(ctx: PdfDocContext, label: string, tagline: string) {
-  pdfSectionLabel(ctx, label);
-  docMutedLine(ctx, tagline);
-  ctx.y += 1;
-}
-
-function docMutedLine(ctx: PdfDocContext, text: string) {
+/** Section heading tight against the table below. */
+function drawSectionIntro(ctx: PdfDocContext, label: string, tagline?: string) {
   const { doc, margin } = ctx;
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(7.5);
-  pdfSetColor(doc, PDF.ink.muted);
-  doc.text(text, margin, ctx.y);
-  ctx.y += 4;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  pdfSetColor(doc, PDF.ink.charcoal);
+  doc.text(label, margin, ctx.y);
+  pdfSetColor(doc, PDF.ink.gold, "draw");
+  doc.setLineWidth(0.4);
+  doc.line(margin, ctx.y + 1.0, margin + 28, ctx.y + 1.0);
+  ctx.y += 3.2;
+
+  if (tagline) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(7);
+    pdfSetColor(doc, PDF.ink.muted);
+    doc.text(tagline, margin, ctx.y);
+    ctx.y += 2.8;
+  }
 }
 
 function buildColumns(contentW: number): PdfColumn[] {
@@ -290,6 +302,16 @@ function buildColumns(contentW: number): PdfColumn[] {
   ];
 }
 
+function buildSpecialColumns(contentW: number): PdfColumn[] {
+  return [
+    { label: "Special", width: contentW * 0.22 },
+    { label: "Includes", width: contentW * 0.4 },
+    { label: "Was", width: contentW * 0.12, align: "right" },
+    { label: "Special price", width: contentW * 0.14, align: "right" },
+    { label: "Save", width: contentW * 0.12, align: "right" },
+  ];
+}
+
 function rowValues(p: Product): string[] {
   return [
     deNameWithFlags(p),
@@ -302,6 +324,66 @@ function rowValues(p: Product): string[] {
     moneyOrDash(retailForSize(p, 100)),
     moneyOrDash(retailForSize(p, 200)),
   ];
+}
+
+function specialIncludes(bundle: BundleSpecialWithSlots): string {
+  const slots = orderedBundleSlots(bundle);
+  if (!slots.length) {
+    const picks = totalPickCount(bundle);
+    return picks > 0 ? `Pick ${picks}` : bundle.headline || bundle.subheadline || "—";
+  }
+  return slots
+    .map((s) => `${s.pick_count}× ${s.tab_label || s.collection_code}`)
+    .join("  ·  ");
+}
+
+function specialRowValues(bundle: BundleSpecialWithSlots): string[] {
+  const price = Number(bundle.bundle_price) || 0;
+  const compare =
+    bundle.compare_at_price != null && Number.isFinite(Number(bundle.compare_at_price))
+      ? Number(bundle.compare_at_price)
+      : null;
+  const save = compare != null && compare > price ? compare - price : null;
+  return [
+    bundle.name || bundle.code || "Special",
+    specialIncludes(bundle),
+    moneyOrDash(compare),
+    pdfMoney(price),
+    moneyOrDash(save),
+  ];
+}
+
+async function loadActiveSpecials(): Promise<BundleSpecialWithSlots[]> {
+  try {
+    const all = await bundleSpecialsApi.listWithSlots();
+    return all
+      .filter((b) => isBundleCurrentlyActive(b))
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  } catch {
+    return [];
+  }
+}
+
+function renderSpecialsPdf(ctx: PdfDocContext, specials: BundleSpecialWithSlots[]) {
+  if (!specials.length) return;
+
+  const cols = buildSpecialColumns(ctx.pageWidth - ctx.margin * 2);
+  const tagline = "Limited bundle offers — pick your scents and save.";
+
+  pdfEnsureSpace(ctx, 24, () => undefined);
+  drawSectionIntro(ctx, "Specials", tagline);
+  const drawHeader = () => pdfTableHeader(ctx, cols);
+  drawHeader();
+
+  specials.forEach((bundle, idx) => {
+    pdfEnsureSpace(ctx, 11, () => {
+      drawSectionIntro(ctx, "Specials (cont.)");
+      drawHeader();
+    });
+    pdfTableRow(ctx, cols, specialRowValues(bundle), { zebra: idx % 2 === 1 });
+  });
+
+  ctx.y += 9;
 }
 
 function addPageNumbers(ctx: PdfDocContext) {
@@ -323,6 +405,7 @@ export async function generateClientPriceListPdf(
   options: ClientPriceListOptions = {},
 ): Promise<void> {
   const active = activeSorted(products);
+  const specials = await loadActiveSpecials();
   const generated = new Date().toISOString().slice(0, 10);
   const preparedFor = options.preparedFor?.trim() || null;
 
@@ -360,24 +443,30 @@ export async function generateClientPriceListPdf(
   let any = false;
   for (const section of CONTENT_PRODUCT_SECTIONS) {
     const sectionProducts = grouped[section.key];
-    if (!sectionProducts.length) continue;
-    any = true;
+    if (sectionProducts.length) {
+      any = true;
+      const tagline = SECTION_TAGLINES[section.key];
+      pdfEnsureSpace(ctx, 24, () => undefined);
+      drawSectionIntro(ctx, section.label, tagline);
+      const drawHeader = () => pdfTableHeader(ctx, cols);
+      drawHeader();
 
-    const tagline = SECTION_TAGLINES[section.key];
-    pdfEnsureSpace(ctx, 32, () => undefined);
-    drawSectionIntro(ctx, section.label, tagline);
-    const drawHeader = () => pdfTableHeader(ctx, cols);
-    drawHeader();
-
-    sectionProducts.forEach((p, idx) => {
-      pdfEnsureSpace(ctx, 12, () => {
-        drawSectionIntro(ctx, `${section.label} (cont.)`, tagline);
-        drawHeader();
+      sectionProducts.forEach((p, idx) => {
+        pdfEnsureSpace(ctx, 11, () => {
+          drawSectionIntro(ctx, `${section.label} (cont.)`);
+          drawHeader();
+        });
+        pdfTableRow(ctx, cols, rowValues(p), { zebra: idx % 2 === 1 });
       });
-      pdfTableRow(ctx, cols, rowValues(p), { zebra: idx % 2 === 1 });
-    });
 
-    ctx.y += 4;
+      ctx.y += 9;
+    }
+
+    // Specials sit directly after Diffuser line
+    if (section.key === "diffusers") {
+      if (specials.length) any = true;
+      renderSpecialsPdf(ctx, specials);
+    }
   }
 
   if (!any) {
@@ -404,6 +493,7 @@ export async function generateClientPriceListExcel(
 ): Promise<void> {
   const ExcelJS = (await import("exceljs")).default;
   const active = activeSorted(products);
+  const specials = await loadActiveSpecials();
   const generated = new Date().toISOString().slice(0, 10);
   const preparedFor = options.preparedFor?.trim() || null;
   const grouped = groupContentProducts(active);
@@ -437,6 +527,25 @@ export async function generateClientPriceListExcel(
     fgColor: { argb: "FF1C1C1C" },
   };
   const goldFont = { name: "Calibri", size: 11, bold: true, color: { argb: "FFC8AA5A" } };
+  const introFill = {
+    type: "pattern" as const,
+    pattern: "solid" as const,
+    fgColor: { argb: "FFF8F7F4" },
+  };
+
+  const writeSectionIntro = (label: string, tagline: string) => {
+    const intro = ws.addRow([label, tagline]);
+    ws.mergeCells(`B${intro.number}:K${intro.number}`);
+    intro.getCell(1).font = goldFont;
+    intro.getCell(1).fill = introFill;
+    intro.getCell(2).font = {
+      name: "Calibri",
+      size: 10,
+      italic: true,
+      color: { argb: "FF6E6E6E" },
+    };
+    intro.getCell(2).fill = introFill;
+  };
 
   ws.mergeCells("A1:K1");
   const title = ws.getCell("A1");
@@ -482,50 +591,69 @@ export async function generateClientPriceListExcel(
     cell.alignment = { vertical: "middle" };
   });
 
+  const writeSpecialsExcel = () => {
+    if (!specials.length) return;
+    writeSectionIntro(
+      "Specials",
+      "Limited bundle offers — pick your scents and save. (30ml column = Was · 50ml column = Special price)",
+    );
+    for (const bundle of specials) {
+      const price = Number(bundle.bundle_price) || 0;
+      const compare =
+        bundle.compare_at_price != null && Number.isFinite(Number(bundle.compare_at_price))
+          ? Number(bundle.compare_at_price)
+          : null;
+      const save = compare != null && compare > price ? compare - price : null;
+      const row = ws.addRow([
+        "Specials",
+        bundle.name || bundle.code || "",
+        "",
+        specialIncludes(bundle),
+        "",
+        "Bundle special",
+        save != null ? `Save ${pdfMoney(save)}` : "",
+        compare,
+        price,
+        null,
+        null,
+      ]);
+      for (const col of [8, 9]) {
+        const cell = row.getCell(col);
+        if (cell.value != null) cell.numFmt = '"R"#,##0.00';
+      }
+    }
+  };
+
   for (const section of CONTENT_PRODUCT_SECTIONS) {
     const sectionProducts = grouped[section.key];
-    if (!sectionProducts.length) continue;
+    if (sectionProducts.length) {
+      writeSectionIntro(section.label, SECTION_TAGLINES[section.key]);
 
-    const intro = ws.addRow([section.label, SECTION_TAGLINES[section.key]]);
-    ws.mergeCells(`B${intro.number}:K${intro.number}`);
-    intro.getCell(1).font = goldFont;
-    intro.getCell(1).fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFF8F7F4" },
-    };
-    intro.getCell(2).font = {
-      name: "Calibri",
-      size: 10,
-      italic: true,
-      color: { argb: "FF6E6E6E" },
-    };
-    intro.getCell(2).fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFF8F7F4" },
-    };
-
-    for (const p of sectionProducts) {
-      const row = ws.addRow([
-        section.label,
-        p.product_name || p.name || "",
-        p.sku || "",
-        p.inspired_by || "",
-        p.designer || "",
-        productTypeLabel(p),
-        productFlags(p),
-        retailForSize(p, 30),
-        retailForSize(p, 50),
-        retailForSize(p, 100),
-        retailForSize(p, 200),
-      ]);
-      for (const col of [8, 9, 10, 11]) {
-        const cell = row.getCell(col);
-        if (cell.value != null) {
-          cell.numFmt = '"R"#,##0.00';
+      for (const p of sectionProducts) {
+        const row = ws.addRow([
+          section.label,
+          p.product_name || p.name || "",
+          p.sku || "",
+          p.inspired_by || "",
+          p.designer || "",
+          productTypeLabel(p),
+          productFlags(p),
+          retailForSize(p, 30),
+          retailForSize(p, 50),
+          retailForSize(p, 100),
+          retailForSize(p, 200),
+        ]);
+        for (const col of [8, 9, 10, 11]) {
+          const cell = row.getCell(col);
+          if (cell.value != null) {
+            cell.numFmt = '"R"#,##0.00';
+          }
         }
       }
+    }
+
+    if (section.key === "diffusers") {
+      writeSpecialsExcel();
     }
   }
 
