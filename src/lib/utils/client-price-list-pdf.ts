@@ -278,23 +278,21 @@ function docMutedLine(ctx: PdfDocContext, text: string) {
 
 function buildColumns(contentW: number): PdfColumn[] {
   return [
-    { label: "DE name", width: contentW * 0.145 },
-    { label: "Brand", width: contentW * 0.085 },
-    { label: "SKU", width: contentW * 0.085 },
-    { label: "Inspired by", width: contentW * 0.135 },
-    { label: "Designer", width: contentW * 0.1 },
-    { label: "Type", width: contentW * 0.14 },
-    { label: "30ml", width: contentW * 0.0775, align: "right" },
-    { label: "50ml", width: contentW * 0.0775, align: "right" },
-    { label: "100ml", width: contentW * 0.0775, align: "right" },
-    { label: "200ml", width: contentW * 0.0775, align: "right" },
+    { label: "DE name", width: contentW * 0.16 },
+    { label: "SKU", width: contentW * 0.1 },
+    { label: "Inspired by", width: contentW * 0.155 },
+    { label: "Designer", width: contentW * 0.12 },
+    { label: "Type", width: contentW * 0.145 },
+    { label: "30ml", width: contentW * 0.08, align: "right" },
+    { label: "50ml", width: contentW * 0.08, align: "right" },
+    { label: "100ml", width: contentW * 0.08, align: "right" },
+    { label: "200ml", width: contentW * 0.08, align: "right" },
   ];
 }
 
 function rowValues(p: Product): string[] {
   return [
     deNameWithFlags(p),
-    p.brand || "—",
     p.sku || "—",
     p.inspired_by || "—",
     p.designer || "—",
@@ -421,12 +419,11 @@ export async function generateClientPriceListExcel(
 
   ws.columns = [
     { key: "line", width: 18 },
-    { key: "name", width: 22 },
-    { key: "brand", width: 14 },
+    { key: "name", width: 24 },
     { key: "sku", width: 14 },
-    { key: "inspired", width: 22 },
+    { key: "inspired", width: 24 },
     { key: "designer", width: 16 },
-    { key: "type", width: 16 },
+    { key: "type", width: 18 },
     { key: "flags", width: 14 },
     { key: "p30", width: 12 },
     { key: "p50", width: 12 },
@@ -441,7 +438,7 @@ export async function generateClientPriceListExcel(
   };
   const goldFont = { name: "Calibri", size: 11, bold: true, color: { argb: "FFC8AA5A" } };
 
-  ws.mergeCells("A1:L1");
+  ws.mergeCells("A1:K1");
   const title = ws.getCell("A1");
   title.value = "DUMI ESSENCE · CLIENT PRICE LIST";
   title.font = { name: "Calibri", size: 18, bold: true, color: { argb: "FFFFFFFF" } };
@@ -449,18 +446,18 @@ export async function generateClientPriceListExcel(
   title.alignment = { vertical: "middle", horizontal: "left" };
   ws.getRow(1).height = 28;
 
-  ws.mergeCells("A2:L2");
+  ws.mergeCells("A2:K2");
   ws.getCell("A2").value = preparedFor
     ? `Prepared for: ${preparedFor}`
     : "General client price list";
   ws.getCell("A2").font = { name: "Calibri", size: 11, bold: true };
 
-  ws.mergeCells("A3:L3");
+  ws.mergeCells("A3:K3");
   ws.getCell("A3").value =
     `Prices valid as of ${generated}  ·  ${active.length} products  ·  ZAR  ·  ${CONTACT.website}  ·  WhatsApp ${CONTACT.whatsapp}`;
   ws.getCell("A3").font = { name: "Calibri", size: 10, color: { argb: "FF6E6E6E" } };
 
-  ws.mergeCells("A4:L4");
+  ws.mergeCells("A4:K4");
   ws.getCell("A4").value = `Order online at ${CONTACT.website} or WhatsApp ${CONTACT.whatsapp}  ·  ${CONTACT.email}`;
   ws.getCell("A4").font = { name: "Calibri", size: 10, color: { argb: "FF6E6E6E" } };
 
@@ -469,7 +466,6 @@ export async function generateClientPriceListExcel(
   const headerRow = ws.addRow([
     "Line",
     "DE name",
-    "Brand",
     "SKU",
     "Inspired by",
     "Designer",
@@ -491,7 +487,7 @@ export async function generateClientPriceListExcel(
     if (!sectionProducts.length) continue;
 
     const intro = ws.addRow([section.label, SECTION_TAGLINES[section.key]]);
-    ws.mergeCells(`B${intro.number}:L${intro.number}`);
+    ws.mergeCells(`B${intro.number}:K${intro.number}`);
     intro.getCell(1).font = goldFont;
     intro.getCell(1).fill = {
       type: "pattern",
@@ -514,7 +510,6 @@ export async function generateClientPriceListExcel(
       const row = ws.addRow([
         section.label,
         p.product_name || p.name || "",
-        p.brand || "",
         p.sku || "",
         p.inspired_by || "",
         p.designer || "",
@@ -525,7 +520,7 @@ export async function generateClientPriceListExcel(
         retailForSize(p, 100),
         retailForSize(p, 200),
       ]);
-      for (const col of [9, 10, 11, 12]) {
+      for (const col of [8, 9, 10, 11]) {
         const cell = row.getCell(col);
         if (cell.value != null) {
           cell.numFmt = '"R"#,##0.00';
